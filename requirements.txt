@@ -1,0 +1,13 @@
+# LangChain core
+langchain>=0.1.0
+langchain-core>=0.1.0
+
+# LLM providers
+langchain-gigachat>=0.1.0
+langchain-openai>=0.0.5
+
+# Agent framework
+langgraph>=0.0.20
+
+# Utilities
+pyyaml>=6.0

@@ -1,0 +1,16 @@
+# Конфигурация агента
+
+# Выбор бэкенда: "gigachat" или "lmstudio"
+active_backend: "lmstudio"
+
+# Настройки подключений
+backends:
+  gigachat:
+    model: "GigaChat-2"
+    env_vars:
+      base_url: "GIGACHAT_API_URL"
+      access_token: "JPY_API_TOKEN"
+  
+  lmstudio:
+    base_url: "http://localhost:1234/v1"
+    model: "openai/gpt-oss-20b"
