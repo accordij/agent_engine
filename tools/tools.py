@@ -1,15 +1,22 @@
 """Инструменты для агента."""
 from langchain.tools import tool
 from typing import Dict, Any
+from agent_engine.debug import log_prompts_enabled
 
 
 # Глобальное хранилище памяти для агента
 _memory_store: Dict[str, Any] = {}
 
 
+def _log_tool_call(tool_name: str) -> None:
+    if log_prompts_enabled():
+        print(f"[TOOL] {tool_name}")
+
+
 @tool
 def calculator(expression: str) -> str:
     """Вычисляет математическое выражение, например: '2 + 3 * 4'"""
+    _log_tool_call("calculator")
     try:
         allowed_names = {"__builtins__": {}}
         result = eval(expression, allowed_names, {})
@@ -28,6 +35,7 @@ def ask_human(question: str) -> str:
     Returns:
         Ответ пользователя
     """
+    _log_tool_call("ask_human")
     print(f"\n🤔 Вопрос агента: {question}")
     response = input("👤 Ваш ответ: ")
     return response
@@ -45,6 +53,7 @@ def memory(action: str, key: str = "", value: str = "") -> str:
     Returns:
         Результат операции
     """
+    _log_tool_call("memory")
     global _memory_store
     
     if action == "save":
@@ -81,6 +90,7 @@ def summarize(focus: str = "general") -> str:
     Returns:
         Краткое саммари
     """
+    _log_tool_call("summarize")
     global _memory_store
     
     if not _memory_store:
@@ -119,6 +129,7 @@ def think(thought: str) -> str:
     Returns:
         Подтверждение размышления
     """
+    _log_tool_call("think")
     print(f"\n💭 Размышление агента: {thought}")
     return f"✓ Размышление зафиксировано: {thought}"
 

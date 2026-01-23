@@ -5,6 +5,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from .state import State, Transition
+from .debug import log_prompts_enabled
 
 
 class AgentState(TypedDict):
@@ -49,6 +50,7 @@ class AgentGraphBuilder:
         self.states: list[State] = []
         self.transitions: list[Transition] = []
         self.entry_point: str | None = None
+        self._last_state_name: str | None = None
     
     def add_state(self, state: State) -> 'AgentGraphBuilder':
         """Добавляет состояние в граф.
@@ -164,16 +166,18 @@ class AgentGraphBuilder:
         
         def node_function(agent_state: AgentState) -> AgentState:
             """Функция узла состояния."""
+            if self._last_state_name != state.name and log_prompts_enabled():
+                prev_label = self._last_state_name or "START"
+                print(f"[STATE] {prev_label} -> {state.name}")
+                self._last_state_name = state.name
             # On enter hook
             if state.on_enter:
                 agent_state = state.on_enter(agent_state)
             
-            # Добавляем системный промпт, если его еще нет
+            # Убираем все системные сообщения и добавляем актуальный промпт состояния
             messages = agent_state['messages']
-            has_system = any(isinstance(msg, SystemMessage) for msg in messages)
-            
-            if not has_system:
-                messages = [SystemMessage(content=state.prompt)] + messages
+            messages = [msg for msg in messages if not isinstance(msg, SystemMessage)]
+            messages = [SystemMessage(content=state.prompt)] + messages
             
             # Вызываем агента
             result = agent.invoke({'messages': messages})
