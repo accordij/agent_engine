@@ -18,3 +18,7 @@ backends:
 # Отладка
 debug:
   log_prompts: true
+
+# Настройки агента
+agent:
+  recursion_limit: 75

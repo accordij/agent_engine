@@ -11,10 +11,16 @@
 │   ├── state.py              # Классы State, Transition, Conditions
 │   └── graph_builder.py      # AgentGraphBuilder - сборщик графа
 │
-├── my_agent/                  # 📝 КОНКРЕТНЫЙ АГЕНТ (ваш агент)
-│   ├── __init__.py
-│   ├── states.py             # Описание состояний агента
-│   └── graph.py              # Граф переходов агента
+├── agents/                    # 🧩 НАБОР АГЕНТОВ
+│   ├── __init__.py           # Универсальные методы build/visualize
+│   ├── my_agent/             # Пример агента
+│   │   ├── __init__.py
+│   │   ├── states.py
+│   │   └── graph.py
+│   └── audit_agent/          # Агент аудита проверок
+│       ├── __init__.py
+│       ├── states.py
+│       └── graph.py
 │
 ├── tools/
 │   └── tools.py              # Инструменты (calculator, ask_human, memory и др.)
@@ -31,7 +37,7 @@
 ### Разделение ответственности
 
 - **`agent_engine/`** — универсальный движок (не трогаем при создании новых агентов)
-- **`my_agent/`** — конкретный агент (создаем/редактируем для новых агентов)
+- **`agents/`** — папка агентов (каждый агент в своем подкаталоге)
 - **`tools/`** — библиотека инструментов (расширяем по мере необходимости)
 
 ## ✨ Возможности
@@ -73,7 +79,7 @@ tools = [calculator, ask_human, memory, think, summarize, my_new_tool]
 ### Шаг 2: Опишите состояния
 
 ```python
-# my_agent/states.py
+# agents/my_agent/states.py
 
 from agent_engine import State
 
@@ -97,7 +103,7 @@ ALL_STATES = [work_state, summarize_state]
 ### Шаг 3: Опишите граф переходов
 
 ```python
-# my_agent/graph.py
+# agents/my_agent/graph.py
 
 from agent_engine import Transition, Conditions, AgentGraphBuilder
 from .states import ALL_STATES
@@ -128,13 +134,13 @@ def build_my_agent(llm, tools_dict):
 ### Шаг 4: Используйте агента
 
 ```python
-from my_agent import build_my_agent
+from agents import build_agent
 
 # Подготовка
 tools_dict = {tool.name: tool for tool in tools}
 
 # Создание
-agent = build_my_agent(llm, tools_dict)
+agent = build_agent("my_agent", llm, tools_dict)
 
 # Запуск
 result = agent.invoke({'messages': ["Задача"], 'memory': {}})
@@ -162,12 +168,12 @@ print(result)  # 1024
 
 #### Пример 1: Простое вычисление с памятью
 ```python
-from my_agent import build_my_agent
+from agents import build_agent
 from tools.tools import tools
 
 # Подготовка
 tools_dict = {tool.name: tool for tool in tools}
-agent = build_my_agent(llm, tools_dict)
+agent = build_agent("my_agent", llm, tools_dict)
 
 # Запрос
 result = agent.invoke({
@@ -297,9 +303,9 @@ Transition(
 ### Визуализация графа
 
 ```python
-from my_agent.graph import visualize_graph
+from agents import visualize_agent
 
-print(visualize_graph(llm, tools_dict))
+print(visualize_agent("my_agent", llm, tools_dict))
 
 # Выведет:
 # 📊 Граф агента:
