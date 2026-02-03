@@ -4,9 +4,12 @@
 active_backend: "lmstudio"
 
 # Настройки подключений
+# temperature - степень случайности, timeout - лимит ожидания (сек.)
 backends:
   gigachat:
     model: "GigaChat-2"
+    temperature: 0.1
+    timeout: 120
     env_vars:
       base_url: "GIGACHAT_API_URL"
       access_token: "JPY_API_TOKEN"
@@ -14,6 +17,8 @@ backends:
   lmstudio:
     base_url: "http://localhost:1234/v1"
     model: "openai/gpt-oss-20b"
+    temperature: 0.3
+    timeout: 60
 
 # Отладка
 debug:
@@ -21,4 +26,4 @@ debug:
 
 # Настройки агента
 agent:
-  recursion_limit: 75
+  recursion_limit: 300

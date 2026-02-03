@@ -70,7 +70,9 @@ def get_gigachat_client(config: dict):
     return GigaChatDelayed(
         base_url=os.getenv(config['env_vars']['base_url']),
         access_token=os.getenv(config['env_vars']['access_token']),
-        model=config['model']
+        model=config['model'],
+        temperature=config['temperature'],
+        timeout=config['timeout']
     )
 
 
@@ -87,6 +89,8 @@ def get_lmstudio_client(config: dict):
     return ChatOpenAI(
         base_url=config['base_url'],
         model=config['model'],
+        temperature=config['temperature'],
+        timeout=config['timeout'],
         api_key="not-needed"  # LM Studio не требует API ключ
     )
 
