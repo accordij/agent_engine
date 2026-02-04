@@ -1,6 +1,14 @@
-# 🤖 Движок для создания агентов с графом состояний
+# 🤖 Фреймворк для создания Multi-Agent систем
 
-Проект содержит **движок для построения агентов** с декларативным описанием состояний и переходов. Включает готовый математический агент как пример использования.
+Проект содержит **фреймворк для построения агентов** с декларативным описанием состояний и переходов. Поддерживает как простых агентов, так и сложные мультиагентные системы.
+
+## ✨ Ключевые особенности
+
+- 🎯 **Один файл - один агент**: Все состояния и переходы в одном месте
+- 🔄 **Легкое копирование**: Скопировал папку → переименовал → работает
+- 🤝 **Мультиагентность**: Агенты могут вызывать друг друга
+- 📊 **Декларативность**: Описываешь ЧТО делать, а не КАК
+- 🔍 **Логирование**: Встроенное отслеживание всех шагов
 
 ## 🏗️ Архитектура проекта
 
@@ -8,227 +16,285 @@
 23_Agent_CDO3/
 ├── agent_engine/              # 🔧 ДВИЖОК (переиспользуемый)
 │   ├── __init__.py
-│   ├── state.py              # Классы State, Transition, Conditions
-│   └── graph_builder.py      # AgentGraphBuilder - сборщик графа
+│   ├── state.py              # State, Transition, Conditions
+│   ├── graph_builder.py      # AgentGraphBuilder
+│   ├── base_agent.py         # AgentConfig (базовый класс)
+│   └── debug.py              # Логирование
 │
 ├── agents/                    # 🧩 НАБОР АГЕНТОВ
-│   ├── __init__.py           # Универсальные методы build/visualize
-│   ├── my_agent/             # Пример агента
-│   │   ├── __init__.py
-│   │   ├── states.py
-│   │   └── graph.py
-│   └── audit_agent/          # Агент аудита проверок
-│       ├── __init__.py
-│       ├── states.py
-│       └── graph.py
+│   ├── test_agent/           # Простейший (1 состояние)
+│   │   ├── agent.py         # ВСЁ В ОДНОМ ФАЙЛЕ!
+│   │   └── __init__.py
+│   ├── my_agent/            # С переходами (2 состояния)
+│   │   ├── agent.py
+│   │   └── __init__.py
+│   ├── router_agent/        # С роутингом (ветвление)
+│   │   ├── agent.py
+│   │   └── __init__.py
+│   ├── supervisor_agent/    # Мультиагент (координатор)
+│   │   ├── agent.py
+│   │   └── __init__.py
+│   └── audit_agent/         # Полный workflow (6 состояний)
+│       ├── agent.py
+│       └── __init__.py
 │
 ├── tools/
-│   └── tools.py              # Инструменты (calculator, ask_human, memory и др.)
+│   └── tools.py              # Инструменты + реестр агентов
 │
 ├── connections/
 │   └── clients.py            # LLM клиенты (GigaChat, LM Studio)
 │
-├── main_agent.ipynb          # Примеры и тесты
+├── main_agent.ipynb          # 🧪 ТЕСТЫ (6 секций)
 ├── config.yaml               # Конфигурация LLM
-└── examples/
-    └── gigachat api.ipynb    # Примеры работы с GigaChat API
+└── data/                     # Данные для audit_agent
 ```
 
-### Разделение ответственности
+## 🚀 Быстрый старт
 
-- **`agent_engine/`** — универсальный движок (не трогаем при создании новых агентов)
-- **`agents/`** — папка агентов (каждый агент в своем подкаталоге)
-- **`tools/`** — библиотека инструментов (расширяем по мере необходимости)
+### 1. Установка
 
-## ✨ Возможности
-
-### 🔌 Два типа подключения к LLM
-- **GigaChat** — для работы в корпоративной среде без интернета
-- **LM Studio** — для локальной работы дома через OpenAI-совместимый API
-
-### 🎯 Движок для построения агентов
-- Декларативное описание состояний (класс `State`)
-- Декларативное описание переходов (класс `Transition`)
-- Библиотека готовых условий (`Conditions`)
-- Fluent API для сборки графа (`AgentGraphBuilder`)
-- Хуки `on_enter`/`on_exit` для кастомной логики
-
-### 🛠️ Готовые инструменты
-- **calculator** — вычисление математических выражений
-- **ask_human** — задавать уточняющие вопросы пользователю
-- **memory** — сохранение и чтение заметок в памяти агента
-- **think** — внутренние размышления агента
-- **summarize** — создание саммари выполненной работы
-
-## 🚀 Workflow создания нового агента
-
-### Шаг 1: Создайте инструменты (если нужны новые)
-
-```python
-# tools/tools.py
-
-@tool
-def my_new_tool(input: str) -> str:
-    """Описание инструмента."""
-    # Ваша логика
-    return result
-
-tools = [calculator, ask_human, memory, think, summarize, my_new_tool]
+```bash
+pip install -r requirements.txt
 ```
 
-### Шаг 2: Опишите состояния
+### 2. Настройка LLM
 
-```python
-# agents/my_agent/states.py
+Отредактируйте `config.yaml`:
 
-from agent_engine import State
+```yaml
+active_backend: lmstudio  # или gigachat
 
-work_state = State(
-    name="work",
-    tools=["calculator", "ask_human", "my_new_tool"],
-    prompt="Ты помощник для...",
-    description="Основное рабочее состояние"
-)
-
-summarize_state = State(
-    name="summarize",
-    tools=["summarize", "memory"],
-    prompt="Ты подводишь итоги...",
-    description="Финальное состояние"
-)
-
-ALL_STATES = [work_state, summarize_state]
+backends:
+  lmstudio:
+    base_url: http://localhost:1234/v1
+  gigachat:
+    env_vars:
+      access_token: JPY_API_TOKEN
 ```
 
-### Шаг 3: Опишите граф переходов
+### 3. Запуск тестов
 
-```python
-# agents/my_agent/graph.py
+Откройте `main_agent.ipynb` и запустите все ячейки. Ноутбук содержит 6 секций тестов:
 
-from agent_engine import Transition, Conditions, AgentGraphBuilder
-from .states import ALL_STATES
+1. ✅ **Тест базовых функций** - проверка инструментов
+2. ✅ **Test Agent** - простейший агент (1 состояние)
+3. ✅ **My Agent** - переходы между состояниями
+4. ✅ **Router Agent** - условный роутинг
+5. ✅ **Multi-Agent** - композиция агентов
+6. ✅ **Audit Agent** - полный workflow
 
-transitions = [
-    Transition(
-        from_state="work",
-        to_state="summarize",
-        condition=Conditions.contains_keyword("ГОТОВО"),
-        description="Переход к саммари"
-    ),
-    Transition(
-        from_state="summarize",
-        to_state="END",
-        condition=Conditions.always_true
-    )
-]
+## 📖 Создание своего агента
 
-def build_my_agent(llm, tools_dict):
-    builder = AgentGraphBuilder(llm, tools_dict)
-    return (builder
-        .add_states(ALL_STATES)
-        .add_transitions(transitions)
-        .set_entry("work")
-        .build())
+### Способ 1: Копирование существующего
+
+```bash
+# 1. Скопируйте папку агента
+cp -r agents/test_agent agents/my_new_agent
+
+# 2. Отредактируйте agents/my_new_agent/agent.py
+# 3. Готово!
 ```
 
-### Шаг 4: Используйте агента
+### Способ 2: Создание с нуля
 
 ```python
-from agents import build_agent
+# agents/my_new_agent/agent.py
 
-# Подготовка
-tools_dict = {tool.name: tool for tool in tools}
+from agent_engine import AgentConfig, State, Transition, Conditions
 
-# Создание
-agent = build_agent("my_agent", llm, tools_dict)
+
+class MyNewAgent(AgentConfig):
+    """Описание вашего агента."""
+    
+    entry_point = "work"  # Начальное состояние
+    
+    states = [
+        State(
+            name="work",
+            tools=["calculator", "memory", "think"],
+            prompt="""Ты помощник для...""",
+            description="Основное состояние"
+        )
+    ]
+    
+    transitions = [
+        Transition(
+            from_state="work",
+            to_state="END",
+            condition=Conditions.contains_keyword("ГОТОВО"),
+            description="Завершение работы"
+        )
+    ]
+```
+
+```python
+# agents/my_new_agent/__init__.py
+
+from .agent import MyNewAgent
+
+__all__ = ["MyNewAgent"]
+```
+
+### Использование агента
+
+```python
+from agents.my_new_agent import MyNewAgent
+from tools.tools import get_tools_dict, tools, reset_memory
+from connections.clients import get_llm_client
+
+# Настройка
+llm = get_llm_client("lmstudio", config)
+tools_dict = get_tools_dict(tools)
+reset_memory()
+
+# Создание агента
+agent = MyNewAgent(llm, tools_dict)
+
+# Визуализация графа
+print(agent.visualize())
 
 # Запуск
-result = agent.invoke({'messages': ["Задача"], 'memory': {}})
-```
-
-## Примеры использования
-
-### Простой ReAct агент (базовый)
-
-#### Пример 1: Простое вычисление
-```python
-query = "Сколько будет 52 умножить на 48?"
-messages = agent_executor.invoke({'messages': [query]})['messages']
-print(messages[-1].content)
-```
-
-#### Пример 3: Прямой вызов инструмента
-```python
-from tools.tools import calculator
-result = calculator.invoke("2 ** 10")
-print(result)  # 1024
-```
-
-### Примеры с готовым математическим агентом
-
-#### Пример 1: Простое вычисление с памятью
-```python
-from agents import build_agent
-from tools.tools import tools
-
-# Подготовка
-tools_dict = {tool.name: tool for tool in tools}
-agent = build_agent("my_agent", llm, tools_dict)
-
-# Запрос
-result = agent.invoke({
-    'messages': ["Вычисли 25 * 4 и сохрани результат в память"],
-    'memory': {}
-})
-
+result = agent.invoke(["Посчитай 2+2"])
 print(result['messages'][-1].content)
-print(result['memory'])  # Сохраненные данные
 ```
 
-#### Пример 2: Вычисление с уточнениями
+## 🎯 Примеры агентов
+
+### 1. Простейший агент (1 состояние)
+
 ```python
-# Агент задаст вопросы через ask_human
-result = agent.invoke({
-    'messages': ["Вычисли площадь прямоугольника. Если не хватает данных, спроси."],
-    'memory': {}
-})
-
-# В процессе выполнения агент задаст вопросы:
-# 🤔 Вопрос агента: Какая длина прямоугольника?
-# 👤 Ваш ответ: 10
-# 🤔 Вопрос агента: Какая ширина?
-# 👤 Ваш ответ: 5
-
-print(result['messages'][-1].content)  # Площадь = 50
+class TestAgent(AgentConfig):
+    entry_point = "work"
+    
+    states = [
+        State(
+            name="work",
+            tools=["calculator", "memory"],
+            prompt="Выполни вычисления и скажи ГОТОВО"
+        )
+    ]
+    
+    transitions = [
+        Transition(from_state="work", to_state="END",
+                  condition=Conditions.contains_keyword("ГОТОВО"))
+    ]
 ```
 
-#### Пример 3: Переход между состояниями
+### 2. Агент с циклом
+
 ```python
-result = agent.invoke({
-    'messages': ["""Реши задачу пошагово:
-    1. Используй think чтобы поразмышлять
-    2. Вычисли (15 + 25) * 2
-    3. Сохрани результат в память
-    4. Скажи ЗАДАЧА_РЕШЕНА"""],
-    'memory': {}
-})
-
-# Агент автоматически пройдет через оба состояния:
-# Work State → размышление, вычисление, сохранение → "ЗАДАЧА_РЕШЕНА"
-# Summarize State → создание саммари
+class MyAgent(AgentConfig):
+    entry_point = "work"
+    
+    states = [
+        State(name="work", tools=["calculator", "memory"],
+              prompt="Работай пока не решишь задачу"),
+        State(name="summarize", tools=["summarize"],
+              prompt="Подведи итоги")
+    ]
+    
+    transitions = [
+        # work → work (цикл, пока не скажет "ЗАДАЧА_РЕШЕНА")
+        Transition(from_state="work", to_state="summarize",
+                  condition=Conditions.contains_keyword("ЗАДАЧА_РЕШЕНА")),
+        Transition(from_state="summarize", to_state="END",
+                  condition=Conditions.always_true)
+    ]
 ```
+
+### 3. Агент с роутингом
+
+```python
+def route_by_type(state: dict) -> str:
+    memory = state.get("memory", {})
+    request_type = memory.get("request_type", "")
+    return "math" if request_type == "math" else "text"
+
+
+class RouterAgent(AgentConfig):
+    entry_point = "classify"
+    
+    states = [
+        State(name="classify", tools=["think", "memory"],
+              prompt="Определи тип запроса и сохрани в memory"),
+        State(name="math", tools=["calculator"],
+              prompt="Реши математическую задачу"),
+        State(name="text", tools=["think"],
+              prompt="Ответь на текстовый запрос")
+    ]
+    
+    transitions = [
+        # Роутер: classify → [math | text]
+        Transition(
+            from_state="classify",
+            condition=route_by_type,
+            routes={"math": "math", "text": "text"}
+        ),
+        Transition(from_state="math", to_state="END",
+                  condition=Conditions.always_true),
+        Transition(from_state="text", to_state="END",
+                  condition=Conditions.always_true)
+    ]
+```
+
+### 4. Мультиагентная система
+
+```python
+# Создаем агентов
+test_agent = TestAgent(llm, tools_dict)
+router_agent = RouterAgent(llm, tools_dict)
+
+# Регистрируем их
+from tools.tools import register_agent
+register_agent("test_agent", test_agent)
+register_agent("router_agent", router_agent)
+
+# Создаем супервизора с инструментом call_agent
+from tools.tools import multiagent_tools
+supervisor_tools_dict = get_tools_dict(tools + multiagent_tools)
+
+supervisor = SupervisorAgent(llm, supervisor_tools_dict)
+
+# Супервизор может вызывать других агентов!
+result = supervisor.invoke([
+    "Вызови test_agent для вычислений и router_agent для приветствия"
+])
+```
+
+## 🛠️ Инструменты
+
+### Базовые инструменты
+
+- **calculator** - вычисление математических выражений
+- **ask_human** - задать вопрос пользователю
+- **memory** - сохранение/чтение данных (action: save/get/list)
+- **memory_append** - добавить строку в журнал
+- **memory_read** - прочитать журнал
+- **think** - внутренние размышления агента
+- **summarize** - создание саммари работы
+
+### Инструменты для файлов (audit_agent)
+
+- **list_data_folders** - список папок
+- **find_case_folder** - поиск папки по номеру
+- **list_case_files** - список файлов в папке
+- **read_docx_structure** - анализ docx
+- **read_sql_file** - чтение SQL
+- **read_py_file** - чтение Python
+
+### Мультиагентные инструменты
+
+- **call_agent** - вызов зарегистрированного агента
 
 ## 📚 Библиотека условий (Conditions)
-
-Движок предоставляет готовые условия для переходов:
 
 ```python
 from agent_engine import Conditions
 
-# Проверка ключевого слова
+# Ключевое слово в последнем сообщении
 Conditions.contains_keyword("ГОТОВО", case_sensitive=False)
 
-# Проверка количества сообщений
+# Количество сообщений
 Conditions.message_count_exceeds(20)
 
 # Безусловный переход
@@ -237,10 +303,7 @@ Conditions.always_true
 # Проверка памяти
 Conditions.memory_contains("result")
 
-# Проверка последнего инструмента
-Conditions.last_message_is_from_tool("calculator")
-
-# Комбинирование условий
+# Комбинирование
 Conditions.combine_and(
     Conditions.contains_keyword("ГОТОВО"),
     Conditions.memory_contains("result")
@@ -251,20 +314,17 @@ Conditions.combine_and(
 
 ### Хуки состояний
 
-Добавьте кастомную логику при входе/выходе из состояния:
-
 ```python
 def log_entry(state):
-    print(f"🔔 Вход в состояние, сообщений: {len(state['messages'])}")
+    print(f"🔔 Вход в состояние")
     return state
 
 def validate_exit(state):
-    # Проверяем, что результат сохранен
     if 'result' not in state.get('memory', {}):
         print("⚠️ Результат не сохранен!")
     return state
 
-my_state = State(
+State(
     name="work",
     tools=["calculator"],
     prompt="...",
@@ -273,57 +333,104 @@ my_state = State(
 )
 ```
 
-### Роутер (множественные переходы)
+### Управление памятью
 
-Переход в разные состояния в зависимости от результата:
-
+**Вариант 1: Глобальная память** (текущая реализация)
 ```python
-def route_by_intent(state) -> str:
-    """Определяет намерение пользователя."""
-    last_msg = state['messages'][-1].content.lower()
-    
-    if "вопрос" in last_msg or "непонятно" in last_msg:
-        return "clarification"
-    elif "вычисли" in last_msg or "посчитай" in last_msg:
-        return "computation"
-    else:
-        return "general"
-
-Transition(
-    from_state="router",
-    condition=route_by_intent,
-    routes={
-        "clarification": "clarification_state",
-        "computation": "computation_state",
-        "general": "general_state"
-    }
-)
+# Все агенты используют общую память через инструменты
+reset_memory()  # Очистка перед новой сессией
 ```
 
-### Визуализация графа
-
+**Вариант 2: Изолированная память** (при необходимости)
 ```python
-from agents import visualize_agent
-
-print(visualize_agent("my_agent", llm, tools_dict))
-
-# Выведет:
-# 📊 Граф агента:
-# 
-# Состояния:
-#   • work (entry)
-#     Инструменты: calculator, ask_human, think, memory
-#   • summarize
-#     Инструменты: summarize, memory
-# 
-# Переходы:
-#   • work → summarize (условный)
-#     Переход к саммари когда задача решена
-#   • summarize → END
+agent1 = MyAgent(llm, tools_dict, agent_id="agent_1")
+agent2 = MyAgent(llm, tools_dict, agent_id="agent_2")
+# Каждый агент имеет свой agent_id для изоляции
 ```
 
-## Примечания
+### Логирование
 
-- GigaChat использует rate limiting с задержкой 6 секунд между запросами
-- LM Studio не требует API ключ для локальной работы
-- Все подключения инкапсулированы в модуле `connections/clients.py`
+```python
+from agent_engine.debug import enable_logging, disable_logging
+
+# Включить логирование
+enable_logging()
+
+# Теперь видны все шаги:
+# [STATE] work -> summarize
+# [TOOL] calculator params={"expression": "2+2"}
+# [TOOL] memory params={"action": "save", "key": "result", "value": "4"}
+
+# Отключить логирование
+disable_logging()
+```
+
+## 🔄 Workflow агента
+
+```
+1. Пользователь → agent.invoke(["Запрос"])
+2. Граф начинается с entry_point
+3. Для каждого состояния:
+   - Выполняется on_enter hook (если есть)
+   - Агент получает промпт и инструменты
+   - LLM генерирует ответ и вызывает инструменты
+   - Выполняется on_exit hook (если есть)
+4. Проверяются условия переходов (Transition.condition)
+5. Переход в следующее состояние или END
+6. Возврат финального состояния с messages и memory
+```
+
+## 🧪 Тестирование
+
+Все тесты в `main_agent.ipynb`:
+
+```python
+# Секция 1: Базовые функции
+calculator.invoke("2 ** 10")  # → 1024
+
+# Секция 2: Test Agent
+test_agent = TestAgent(llm, tools_dict)
+result = test_agent.invoke(["Посчитай 15 * 23"])
+
+# Секция 3: My Agent
+my_agent = MyAgent(llm, tools_dict)
+result = my_agent.invoke(["Посчитай 2^10"])
+
+# Секция 4: Router Agent
+router_agent = RouterAgent(llm, tools_dict)
+result = router_agent.invoke(["Посчитай 5+5"])  # → math path
+
+# Секция 5: Multi-Agent
+register_agent("test_agent", test_agent)
+supervisor = SupervisorAgent(llm, supervisor_tools_dict)
+result = supervisor.invoke(["Делегируй вычисление test_agent"])
+
+# Секция 6: Audit Agent
+audit_agent = AuditAgent(llm, tools_dict)
+result = audit_agent.invoke(["Проверь папку 99-41116"])
+```
+
+## 🎓 Лучшие практики
+
+1. **Один файл на агента**: Все в `agent.py` - легко читать и поддерживать
+2. **Явные ключевые слова**: Используйте четкие маркеры для переходов ("ГОТОВО", "ЗАДАЧА_РЕШЕНА")
+3. **Описания**: Добавляйте description к State и Transition для документации
+4. **Изоляция памяти**: Очищайте память через `reset_memory()` перед новой сессией
+5. **Логирование**: Включайте для отладки, отключайте для production
+6. **Роутеры в функциях**: Выносите сложные роутеры в отдельные функции
+
+## 📝 Примечания
+
+- **GigaChat**: rate limiting 6 секунд между запросами
+- **LM Studio**: не требует API ключ для локальной работы
+- **История сообщений**: изолирована для каждого агента
+- **Память**: глобальная через инструменты memory (можно изолировать через agent_id)
+- **Recursion limit**: настраивается в config.yaml (по умолчанию 300)
+
+## 🤝 Поддержка
+
+Для вопросов и предложений создавайте issues в репозитории.
+
+## 📄 Лицензия
+
+MIT License

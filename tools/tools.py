@@ -49,12 +49,12 @@ def calculator(expression: str) -> str:
         allowed_names = {"__builtins__": {}}
         result = eval(expression, allowed_names, {})
         output = str(result)
-        memory_append(f"[calculator] {expression} = {output}")
+        memory_append.invoke(f"[calculator] {expression} = {output}")
         _log_tool_result("calculator", output)
         return output
     except Exception as e:
         output = f"Ошибка вычисления: {e}"
-        memory_append(f"[calculator] {expression} -> {output}")
+        memory_append.invoke(f"[calculator] {expression} -> {output}")
         _log_tool_result("calculator", output)
         return output
 
@@ -476,7 +476,7 @@ def read_py_file(py_path: str) -> str:
     return output
 
 
-# Экспорт списка инструментов
+# Экспорт списка инструментов (базовые)
 tools = [
     calculator,
     ask_human,
@@ -491,4 +491,105 @@ tools = [
     read_docx_structure,
     read_sql_file,
     read_py_file
+]
+
+# ============================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
+
+def get_tools_dict(tools_list: list = None) -> dict:
+    """Преобразует список инструментов в словарь {имя: объект}.
+    
+    Args:
+        tools_list: Список инструментов (по умолчанию используется tools)
+        
+    Returns:
+        Словарь {имя_инструмента: объект_инструмента}
+    """
+    if tools_list is None:
+        tools_list = tools
+    return {tool.name: tool for tool in tools_list}
+
+
+# ============================================================
+# РЕЕСТР АГЕНТОВ ДЛЯ МУЛЬТИАГЕНТНЫХ СИСТЕМ
+# ============================================================
+
+_agents_registry: dict = {}
+
+
+def register_agent(name: str, agent) -> None:
+    """Регистрирует агента в глобальном реестре для вызова другими агентами.
+    
+    Args:
+        name: Уникальное имя агента
+        agent: Объект агента (должен иметь метод invoke)
+    """
+    _agents_registry[name] = agent
+    if log_prompts_enabled():
+        print(f"[REGISTRY] Зарегистрирован агент: {name}")
+
+
+def get_registered_agent(name: str):
+    """Получает зарегистрированного агента по имени.
+    
+    Args:
+        name: Имя агента
+        
+    Returns:
+        Объект агента или None если не найден
+    """
+    return _agents_registry.get(name)
+
+
+def list_registered_agents() -> list[str]:
+    """Возвращает список имен зарегистрированных агентов."""
+    return list(_agents_registry.keys())
+
+
+@tool
+def call_agent(agent_name: str, query: str) -> str:
+    """Вызывает другого зарегистрированного агента.
+    
+    ВАЖНО: Агент должен быть предварительно зарегистрирован через register_agent()
+    
+    Args:
+        agent_name: Имя агента для вызова
+        query: Запрос к агенту
+        
+    Returns:
+        Результат работы агента
+        
+    Пример:
+        # Регистрация агента
+        register_agent("math_agent", math_agent_instance)
+        
+        # Вызов из другого агента
+        result = call_agent("math_agent", "Посчитай 2+2")
+    """
+    _log_tool_call("call_agent", {"agent_name": agent_name, "query": query})
+    
+    agent = get_registered_agent(agent_name)
+    if not agent:
+        available = ", ".join(list_registered_agents()) or "нет"
+        output = f"Ошибка: агент '{agent_name}' не зарегистрирован. Доступны: {available}"
+        _log_tool_result("call_agent", output)
+        return output
+    
+    try:
+        result = agent.invoke([query])
+        # Получаем последнее сообщение от агента
+        last_message = result['messages'][-1].content
+        output = f"Результат от агента '{agent_name}':\n{last_message}"
+        _log_tool_result("call_agent", output)
+        return output
+    except Exception as e:
+        output = f"Ошибка при вызове агента '{agent_name}': {e}"
+        _log_tool_result("call_agent", output)
+        return output
+
+
+# Инструменты для мультиагентных систем (добавляются отдельно при необходимости)
+multiagent_tools = [
+    call_agent
 ]

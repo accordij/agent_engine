@@ -30,10 +30,12 @@
 
 from .state import State, Transition, Conditions
 from .graph_builder import AgentGraphBuilder
+from .base_agent import AgentConfig
 
 __all__ = [
     'State',
     'Transition', 
     'Conditions',
-    'AgentGraphBuilder'
+    'AgentGraphBuilder',
+    'AgentConfig'
 ]

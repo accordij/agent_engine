@@ -1,5 +1,5 @@
 """Агент аудита файлов проверки."""
 
-from .graph import build_audit_agent
+from .agent import AuditAgent
 
-__all__ = ["build_audit_agent"]
+__all__ = ["AuditAgent"]

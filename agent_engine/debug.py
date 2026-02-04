@@ -10,10 +10,30 @@ import yaml
 _session_id: str | None = None
 _session_path: Path | None = None
 _event_seq: int = 0
+_logging_enabled: bool = False  # Глобальный флаг логирования
+
+
+def enable_logging() -> None:
+    """Включает консольное логирование для отладки."""
+    global _logging_enabled
+    _logging_enabled = True
+
+
+def disable_logging() -> None:
+    """Отключает консольное логирование."""
+    global _logging_enabled
+    _logging_enabled = False
 
 
 def log_prompts_enabled(config_path: str | Path = "config.yaml") -> bool:
-    """Возвращает флаг логирования промптов из config.yaml."""
+    """Возвращает флаг логирования промптов.
+    
+    Проверяет глобальный флаг _logging_enabled ИЛИ настройку в config.yaml.
+    """
+    global _logging_enabled
+    if _logging_enabled:
+        return True
+    
     try:
         with open(config_path, "r", encoding="utf-8") as file:
             config = yaml.safe_load(file) or {}

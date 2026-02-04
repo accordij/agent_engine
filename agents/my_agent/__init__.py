@@ -1,5 +1,5 @@
-"""Математический агент с состояниями работы и подведения итогов."""
+"""Математический агент."""
 
-from .graph import build_my_agent
+from .agent import MyAgent
 
-__all__ = ['build_my_agent']
+__all__ = ["MyAgent"]
