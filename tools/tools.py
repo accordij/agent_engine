@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 
 # Глобальное хранилище памяти для агента
 _memory_store: Dict[str, Any] = {}
+_memory_log: list[str] = []
 
 
 def _log_tool_call(tool_name: str, params: dict | None = None) -> None:
@@ -48,10 +49,12 @@ def calculator(expression: str) -> str:
         allowed_names = {"__builtins__": {}}
         result = eval(expression, allowed_names, {})
         output = str(result)
+        memory_append(f"[calculator] {expression} = {output}")
         _log_tool_result("calculator", output)
         return output
     except Exception as e:
         output = f"Ошибка вычисления: {e}"
+        memory_append(f"[calculator] {expression} -> {output}")
         _log_tool_result("calculator", output)
         return output
 
@@ -124,6 +127,46 @@ def memory(action: str, key: str = "", value: str = "") -> str:
         output = f"Неизвестное действие: {action}. Используйте 'save', 'get' или 'list'"
         _log_tool_result("memory", output)
         return output
+
+
+def reset_memory() -> None:
+    """Сбрасывает память агента (глобальные хранилища)."""
+    global _memory_store, _memory_log
+    _memory_store = {}
+    _memory_log = []
+
+
+@tool
+def memory_append(text: str) -> str:
+    """Добавляет строку в журнал памяти (append-only)."""
+    _log_tool_call("memory_append", {"text": text})
+    global _memory_log
+    if text is None:
+        output = "Ошибка: text не может быть пустым"
+        _log_tool_result("memory_append", output)
+        return output
+    _memory_log.append(str(text))
+    output = f"✓ Добавлено в журнал: {text}"
+    _log_tool_result("memory_append", output)
+    return output
+
+
+@tool
+def memory_read(limit: int = 0) -> str:
+    """Возвращает журнал памяти. Если limit > 0, возвращает последние N строк."""
+    _log_tool_call("memory_read", {"limit": limit})
+    global _memory_log
+    if not _memory_log:
+        output = "Журнал памяти пуст"
+        _log_tool_result("memory_read", output)
+        return output
+    if isinstance(limit, int) and limit > 0:
+        lines = _memory_log[-limit:]
+    else:
+        lines = _memory_log
+    output = "\n".join(lines)
+    _log_tool_result("memory_read", output)
+    return output
 
 
 @tool
@@ -438,6 +481,8 @@ tools = [
     calculator,
     ask_human,
     memory,
+    memory_append,
+    memory_read,
     summarize,
     think,
     list_data_folders,
