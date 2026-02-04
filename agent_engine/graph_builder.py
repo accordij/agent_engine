@@ -1,11 +1,11 @@
 """Сборщик графа агента из декларативных описаний."""
 from typing import TypedDict, Annotated
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from .state import State, Transition
-from .debug import log_prompts_enabled
+from .debug import log_prompts_enabled, log_event, serialize_messages
 
 
 class AgentState(TypedDict):
@@ -51,6 +51,7 @@ class AgentGraphBuilder:
         self.transitions: list[Transition] = []
         self.entry_point: str | None = None
         self._last_state_name: str | None = None
+        self._cycle_count: int = 0
     
     def add_state(self, state: State) -> 'AgentGraphBuilder':
         """Добавляет состояние в граф.
@@ -164,23 +165,74 @@ class AgentGraphBuilder:
         # Создаем ReAct агента для этого состояния
         agent = create_react_agent(self.llm, state_tools)
         
+        def _strip_tool_calls(messages: list) -> list:
+            """Убирает tool_calls из истории, оставляя только результаты."""
+            cleaned = []
+            for msg in messages:
+                if isinstance(msg, SystemMessage):
+                    continue
+                if isinstance(msg, AIMessage):
+                    cleaned.append(AIMessage(content=msg.content))
+                    continue
+                if isinstance(msg, HumanMessage):
+                    cleaned.append(msg)
+                    continue
+                if isinstance(msg, ToolMessage):
+                    # cleaned.append(msg)
+                    continue
+                cleaned.append(msg)
+            return cleaned
+
         def node_function(agent_state: AgentState) -> AgentState:
             """Функция узла состояния."""
-            if self._last_state_name != state.name and log_prompts_enabled():
-                prev_label = self._last_state_name or "START"
-                print(f"[STATE] {prev_label} -> {state.name}")
+            self._cycle_count += 1
+            step = self._cycle_count
+            prev_state = self._last_state_name or "START"
+            if self._last_state_name != state.name:
+                if log_prompts_enabled():
+                    print(f"[STATE] {prev_state} -> {state.name}")
                 self._last_state_name = state.name
+
+            log_event(
+                "state_transition",
+                {
+                    "from_state": prev_state,
+                    "to_state": state.name,
+                    "message_count": len(agent_state.get("messages", [])),
+                    "memory_keys": sorted(list((agent_state.get("memory") or {}).keys())),
+                },
+                step=step,
+                state=state.name,
+            )
             # On enter hook
             if state.on_enter:
                 agent_state = state.on_enter(agent_state)
             
-            # Убираем все системные сообщения и добавляем актуальный промпт состояния
-            messages = agent_state['messages']
-            messages = [msg for msg in messages if not isinstance(msg, SystemMessage)]
+            # Убираем все системные сообщения, чистим tool_calls и добавляем актуальный промпт состояния
+            messages = _strip_tool_calls(agent_state['messages'])
             messages = [SystemMessage(content=state.prompt)] + messages
+
+            log_event(
+                "llm_request",
+                {
+                    "state_prompt": state.prompt,
+                    "messages": serialize_messages(messages),
+                },
+                step=step,
+                state=state.name,
+            )
             
             # Вызываем агента
             result = agent.invoke({'messages': messages})
+
+            log_event(
+                "llm_response",
+                {
+                    "messages": serialize_messages(result.get("messages", [])),
+                },
+                step=step,
+                state=state.name,
+            )
             
             # Синхронизируем глобальную память инструмента с состоянием
             from tools.tools import _memory_store

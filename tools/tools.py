@@ -1,7 +1,7 @@
 """Инструменты для агента."""
 from langchain.tools import tool
 from typing import Dict, Any
-from agent_engine.debug import log_prompts_enabled
+from agent_engine.debug import log_prompts_enabled, log_event
 import os
 import re
 import json
@@ -14,21 +14,46 @@ import xml.etree.ElementTree as ET
 _memory_store: Dict[str, Any] = {}
 
 
-def _log_tool_call(tool_name: str) -> None:
+def _log_tool_call(tool_name: str, params: dict | None = None) -> None:
     if log_prompts_enabled():
-        print(f"[TOOL] {tool_name}", flush=True)
+        if params:
+            params_str = json.dumps(params, ensure_ascii=False)
+            print(f"[TOOL] {tool_name} params={params_str}", flush=True)
+        else:
+            print(f"[TOOL] {tool_name}", flush=True)
+    log_event(
+        "tool_call",
+        {
+            "tool": tool_name,
+            "params": params or {},
+        },
+    )
+
+
+def _log_tool_result(tool_name: str, result) -> None:
+    log_event(
+        "tool_result",
+        {
+            "tool": tool_name,
+            "result": result,
+        },
+    )
 
 
 @tool
 def calculator(expression: str) -> str:
     """Вычисляет математическое выражение, например: '2 + 3 * 4'"""
-    _log_tool_call("calculator")
+    _log_tool_call("calculator", {"expression": expression})
     try:
         allowed_names = {"__builtins__": {}}
         result = eval(expression, allowed_names, {})
-        return str(result)
+        output = str(result)
+        _log_tool_result("calculator", output)
+        return output
     except Exception as e:
-        return f"Ошибка вычисления: {e}"
+        output = f"Ошибка вычисления: {e}"
+        _log_tool_result("calculator", output)
+        return output
 
 
 @tool
@@ -41,9 +66,10 @@ def ask_human(question: str) -> str:
     Returns:
         Ответ пользователя
     """
-    _log_tool_call("ask_human")
+    _log_tool_call("ask_human", {"question": question})
     print(f"\n🤔 Вопрос агента: {question}", flush=True)
     response = input("👤 Ваш ответ: ")
+    _log_tool_result("ask_human", response)
     return response
 
 
@@ -59,31 +85,45 @@ def memory(action: str, key: str = "", value: str = "") -> str:
     Returns:
         Результат операции
     """
-    _log_tool_call("memory")
+    _log_tool_call("memory", {"action": action, "key": key, "value": value})
     global _memory_store
     
     if action == "save":
         if not key:
-            return "Ошибка: нужно указать ключ для сохранения"
+            output = "Ошибка: нужно указать ключ для сохранения"
+            _log_tool_result("memory", output)
+            return output
         _memory_store[key] = value
-        return f"✓ Сохранено в память: {key} = {value}"
+        output = f"✓ Сохранено в память: {key} = {value}"
+        _log_tool_result("memory", output)
+        return output
     
     elif action == "get":
         if not key:
-            return "Ошибка: нужно указать ключ для чтения"
+            output = "Ошибка: нужно указать ключ для чтения"
+            _log_tool_result("memory", output)
+            return output
         if key in _memory_store:
-            return f"Из памяти: {key} = {_memory_store[key]}"
+            output = f"Из памяти: {key} = {_memory_store[key]}"
         else:
-            return f"Ключ '{key}' не найден в памяти"
+            output = f"Ключ '{key}' не найден в памяти"
+        _log_tool_result("memory", output)
+        return output
     
     elif action == "list":
         if not _memory_store:
-            return "Память пуста"
+            output = "Память пуста"
+            _log_tool_result("memory", output)
+            return output
         keys = ", ".join(_memory_store.keys())
-        return f"Ключи в памяти: {keys}"
+        output = f"Ключи в памяти: {keys}"
+        _log_tool_result("memory", output)
+        return output
     
     else:
-        return f"Неизвестное действие: {action}. Используйте 'save', 'get' или 'list'"
+        output = f"Неизвестное действие: {action}. Используйте 'save', 'get' или 'list'"
+        _log_tool_result("memory", output)
+        return output
 
 
 @tool
@@ -96,11 +136,13 @@ def summarize(focus: str = "general") -> str:
     Returns:
         Краткое саммари
     """
-    _log_tool_call("summarize")
+    _log_tool_call("summarize", {"focus": focus})
     global _memory_store
     
     if not _memory_store:
-        return "📝 Саммари: Память пуста, нет данных для создания саммари."
+        output = "📝 Саммари: Память пуста, нет данных для создания саммари."
+        _log_tool_result("summarize", output)
+        return output
     
     summary_parts = ["📝 Саммари выполненной работы:"]
     
@@ -121,7 +163,9 @@ def summarize(focus: str = "general") -> str:
         for key, value in _memory_store.items():
             summary_parts.append(f"  - {key}: {value}")
     
-    return "\n".join(summary_parts)
+    output = "\n".join(summary_parts)
+    _log_tool_result("summarize", output)
+    return output
 
 
 @tool
@@ -135,25 +179,33 @@ def think(thought: str) -> str:
     Returns:
         Подтверждение размышления
     """
-    _log_tool_call("think")
+    _log_tool_call("think", {"thought": thought})
     print(f"\n💭 Размышление агента: {thought}", flush=True)
-    return f"✓ Размышление зафиксировано: {thought}"
+    output = f"✓ Размышление зафиксировано: {thought}"
+    _log_tool_result("think", output)
+    return output
 
 
 @tool
 def list_data_folders(data_root: str = "data") -> str:
     """Возвращает список папок в корневой папке data."""
-    _log_tool_call("list_data_folders")
+    _log_tool_call("list_data_folders", {"data_root": data_root})
     if not os.path.isdir(data_root):
-        return f"Ошибка: папка '{data_root}' не найдена"
+        output = f"Ошибка: папка '{data_root}' не найдена"
+        _log_tool_result("list_data_folders", output)
+        return output
     folders = [
         name for name in os.listdir(data_root)
         if os.path.isdir(os.path.join(data_root, name))
     ]
     if not folders:
-        return "Папка data пуста"
+        output = "Папка data пуста"
+        _log_tool_result("list_data_folders", output)
+        return output
     folders.sort()
-    return "\n".join(folders)
+    output = "\n".join(folders)
+    _log_tool_result("list_data_folders", output)
+    return output
 
 
 def _normalize_case_name(value: str) -> str:
@@ -188,18 +240,24 @@ def find_case_folder(case_input: str, data_root: str = "data") -> str:
     - match: путь к папке (если status="ok")
     - candidates: топ-5 кандидатов с оценками
     """
-    _log_tool_call("find_case_folder")
+    _log_tool_call("find_case_folder", {"case_input": case_input, "data_root": data_root})
     if not case_input:
-        return json.dumps({"status": "needs_confirmation", "reason": "empty_input"}, ensure_ascii=False)
+        output = json.dumps({"status": "needs_confirmation", "reason": "empty_input"}, ensure_ascii=False)
+        _log_tool_result("find_case_folder", output)
+        return output
     if not os.path.isdir(data_root):
-        return json.dumps({"status": "error", "reason": "data_root_not_found"}, ensure_ascii=False)
+        output = json.dumps({"status": "error", "reason": "data_root_not_found"}, ensure_ascii=False)
+        _log_tool_result("find_case_folder", output)
+        return output
 
     folders = [
         name for name in os.listdir(data_root)
         if os.path.isdir(os.path.join(data_root, name))
     ]
     if not folders:
-        return json.dumps({"status": "error", "reason": "no_folders"}, ensure_ascii=False)
+        output = json.dumps({"status": "error", "reason": "no_folders"}, ensure_ascii=False)
+        _log_tool_result("find_case_folder", output)
+        return output
 
     normalized_input = _normalize_case_name(case_input)
     substring_matches = []
@@ -214,18 +272,22 @@ def find_case_folder(case_input: str, data_root: str = "data") -> str:
         substring_matches.sort(key=lambda x: x["score"], reverse=True)
         if len(substring_matches) == 1:
             best = substring_matches[0]
-            return json.dumps({
+            output = json.dumps({
                 "status": "ok",
                 "match": os.path.join(data_root, best["folder"]),
                 "score": best["score"],
                 "match_mode": "substring",
                 "candidates": substring_matches
             }, ensure_ascii=False)
-        return json.dumps({
+            _log_tool_result("find_case_folder", output)
+            return output
+        output = json.dumps({
             "status": "needs_confirmation",
             "match_mode": "substring",
             "candidates": substring_matches[:5]
         }, ensure_ascii=False)
+        _log_tool_result("find_case_folder", output)
+        return output
 
     scored = []
     for folder in folders:
@@ -240,35 +302,47 @@ def find_case_folder(case_input: str, data_root: str = "data") -> str:
     confident = best["score"] >= 0.75 and (second is None or (best["score"] - second["score"]) >= 0.08)
 
     if confident:
-        return json.dumps({
+        output = json.dumps({
             "status": "ok",
             "match": os.path.join(data_root, best["folder"]),
             "score": best["score"],
             "candidates": top_candidates
         }, ensure_ascii=False)
+        _log_tool_result("find_case_folder", output)
+        return output
 
-    return json.dumps({
+    output = json.dumps({
         "status": "needs_confirmation",
         "candidates": top_candidates
     }, ensure_ascii=False)
+    _log_tool_result("find_case_folder", output)
+    return output
 
 
 @tool
 def list_case_files(case_folder: str) -> str:
     """Возвращает список файлов в папке проверки."""
-    _log_tool_call("list_case_files")
+    _log_tool_call("list_case_files", {"case_folder": case_folder})
     if not case_folder:
-        return "Ошибка: не указан путь к папке"
+        output = "Ошибка: не указан путь к папке"
+        _log_tool_result("list_case_files", output)
+        return output
     if not os.path.isdir(case_folder):
-        return f"Ошибка: папка '{case_folder}' не найдена"
+        output = f"Ошибка: папка '{case_folder}' не найдена"
+        _log_tool_result("list_case_files", output)
+        return output
     files = [
         name for name in os.listdir(case_folder)
         if os.path.isfile(os.path.join(case_folder, name))
     ]
     if not files:
-        return "В папке нет файлов"
+        output = "В папке нет файлов"
+        _log_tool_result("list_case_files", output)
+        return output
     files.sort()
-    return "\n".join(files)
+    output = "\n".join(files)
+    _log_tool_result("list_case_files", output)
+    return output
 
 
 def _extract_docx_text_nodes(xml_content: str) -> list[str]:
@@ -285,18 +359,24 @@ def _extract_docx_text_nodes(xml_content: str) -> list[str]:
 @tool
 def read_docx_structure(docx_path: str) -> str:
     """Читает docx и возвращает названия реплик и таблиц (если найдены)."""
-    _log_tool_call("read_docx_structure")
+    _log_tool_call("read_docx_structure", {"docx_path": docx_path})
     if not docx_path:
-        return json.dumps({"status": "error", "reason": "empty_path"}, ensure_ascii=False)
+        output = json.dumps({"status": "error", "reason": "empty_path"}, ensure_ascii=False)
+        _log_tool_result("read_docx_structure", output)
+        return output
     if not os.path.isfile(docx_path):
-        return json.dumps({"status": "error", "reason": "file_not_found"}, ensure_ascii=False)
+        output = json.dumps({"status": "error", "reason": "file_not_found"}, ensure_ascii=False)
+        _log_tool_result("read_docx_structure", output)
+        return output
 
     try:
         with zipfile.ZipFile(docx_path, "r") as archive:
             with archive.open("word/document.xml") as doc_xml:
                 xml_content = doc_xml.read().decode("utf-8", errors="ignore")
     except Exception as exc:
-        return json.dumps({"status": "error", "reason": f"docx_read_failed: {exc}"}, ensure_ascii=False)
+        output = json.dumps({"status": "error", "reason": f"docx_read_failed: {exc}"}, ensure_ascii=False)
+        _log_tool_result("read_docx_structure", output)
+        return output
 
     paragraphs = _extract_docx_text_nodes(xml_content)
     replica_titles = []
@@ -307,36 +387,50 @@ def read_docx_structure(docx_path: str) -> str:
         if re.search(r"\bтаблица\b", text, flags=re.IGNORECASE):
             table_titles.append(text)
 
-    return json.dumps({
+    output = json.dumps({
         "status": "ok",
         "replica_titles": replica_titles[:50],
         "table_titles": table_titles[:50],
         "total_paragraphs": len(paragraphs)
     }, ensure_ascii=False)
+    _log_tool_result("read_docx_structure", output)
+    return output
 
 
 @tool
 def read_sql_file(sql_path: str) -> str:
     """Читает SQL-файл."""
-    _log_tool_call("read_sql_file")
+    _log_tool_call("read_sql_file", {"sql_path": sql_path})
     if not sql_path:
-        return "Ошибка: не указан путь к файлу"
+        output = "Ошибка: не указан путь к файлу"
+        _log_tool_result("read_sql_file", output)
+        return output
     if not os.path.isfile(sql_path):
-        return f"Ошибка: файл '{sql_path}' не найден"
+        output = f"Ошибка: файл '{sql_path}' не найден"
+        _log_tool_result("read_sql_file", output)
+        return output
     with open(sql_path, "r", encoding="utf-8") as file:
-        return file.read()
+        output = file.read()
+    _log_tool_result("read_sql_file", output)
+    return output
 
 
 @tool
 def read_py_file(py_path: str) -> str:
     """Читает Python-файл."""
-    _log_tool_call("read_py_file")
+    _log_tool_call("read_py_file", {"py_path": py_path})
     if not py_path:
-        return "Ошибка: не указан путь к файлу"
+        output = "Ошибка: не указан путь к файлу"
+        _log_tool_result("read_py_file", output)
+        return output
     if not os.path.isfile(py_path):
-        return f"Ошибка: файл '{py_path}' не найден"
+        output = f"Ошибка: файл '{py_path}' не найден"
+        _log_tool_result("read_py_file", output)
+        return output
     with open(py_path, "r", encoding="utf-8") as file:
-        return file.read()
+        output = file.read()
+    _log_tool_result("read_py_file", output)
+    return output
 
 
 # Экспорт списка инструментов

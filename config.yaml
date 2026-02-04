@@ -7,7 +7,7 @@ active_backend: "lmstudio"
 # temperature - степень случайности, timeout - лимит ожидания (сек.)
 backends:
   gigachat:
-    model: "GigaChat-2"
+    model: "GigaChat-2-MAX"
     temperature: 0.1
     timeout: 120
     env_vars:
@@ -18,12 +18,18 @@ backends:
     base_url: "http://localhost:1234/v1"
     model: "openai/gpt-oss-20b"
     temperature: 0.3
-    timeout: 60
+    timeout: 120
 
 # Отладка
 debug:
   log_prompts: true
+  log_sessions: true
+  log_dir: "logs"
+  log_llm_messages: true
+  log_tool_params: true
+  log_tool_results: true
+  log_state_events: true
 
 # Настройки агента
 agent:
-  recursion_limit: 300
+  recursion_limit: 30
