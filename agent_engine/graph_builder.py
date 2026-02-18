@@ -165,20 +165,22 @@ class AgentGraphBuilder:
         agent = create_react_agent(self.llm, state_tools)
         
         def _strip_tool_calls(messages: list) -> list:
-            """Убирает tool_calls из истории, оставляя только результаты."""
+            """Убирает системные сообщения и другие из истории, оставляя только результаты."""
             cleaned = []
             for msg in messages:
                 if isinstance(msg, SystemMessage):
                     # не берем системные сообщения в историю
                     continue
                 if isinstance(msg, AIMessage):
-                    cleaned.append(AIMessage(content=msg.content))
+                    # можно оставть только результаты
+                    # cleaned.append(AIMessage(content=msg.content))
+                    cleaned.append(msg)
                     continue
                 if isinstance(msg, HumanMessage):
                     cleaned.append(msg)
                     continue
                 if isinstance(msg, ToolMessage):
-                    # cleaned.append(msg)
+                    cleaned.append(msg)
                     continue
                 cleaned.append(msg)
             return cleaned
@@ -222,7 +224,7 @@ class AgentGraphBuilder:
                 state=state.name,
             )
             
-            # Вызываем агента
+            # Отправляем запрос к LLM (вызов агента)
             result = agent.invoke({'messages': messages})
 
             log_event(
