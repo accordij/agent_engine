@@ -1,8 +1,7 @@
 """Сборщик графа агента из декларативных описаний."""
-from typing import TypedDict, Annotated
+from typing import TypedDict
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from .state import State, Transition
 from .debug import log_prompts_enabled, log_event, serialize_messages
@@ -10,7 +9,7 @@ from .debug import log_prompts_enabled, log_event, serialize_messages
 
 class AgentState(TypedDict):
     """Состояние агента в графе."""
-    messages: Annotated[list, add_messages]
+    messages: list
     memory: dict
 
 
@@ -170,6 +169,7 @@ class AgentGraphBuilder:
             cleaned = []
             for msg in messages:
                 if isinstance(msg, SystemMessage):
+                    # не берем системные сообщения в историю
                     continue
                 if isinstance(msg, AIMessage):
                     cleaned.append(AIMessage(content=msg.content))

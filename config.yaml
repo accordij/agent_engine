@@ -8,7 +8,7 @@ active_backend: "lmstudio"
 backends:
   gigachat:
     model: "GigaChat-2-MAX"
-    temperature: 0.1
+    temperature: 0.2
     timeout: 120
     env_vars:
       base_url: "GIGACHAT_API_URL"
@@ -17,7 +17,7 @@ backends:
   lmstudio:
     base_url: "http://localhost:1234/v1"
     model: "openai/gpt-oss-20b"
-    temperature: 0.3
+    temperature: 0.2
     timeout: 120
 
 # Отладка
