@@ -1,24 +1,10 @@
-"""Простейший тестовый агент с одним состоянием.
+"""Простейший тестовый агент с одним состоянием."""
 
-Используется для проверки базовой функциональности:
-- Создание агента через AgentConfig
-- Работа с инструментами
-- Переход в END
-"""
-
-from agent_engine import AgentConfig, State, Transition, Conditions
+from agent_engine import AgentConfig, State
 
 
 class TestAgent(AgentConfig):
-    """Простейший агент для тестирования базовой функциональности.
-    
-    Граф: [work] → END
-    
-    Используется для проверки:
-    - Базовая работа с AgentConfig
-    - Вызов инструментов (calculator, memory, think)
-    - Безусловный переход в END
-    """
+    """Граф: [work] → END"""
     
     entry_point = "work"
     
@@ -34,17 +20,8 @@ class TestAgent(AgentConfig):
 - think: размышления
 
 Выполни запрос пользователя, используя доступные инструменты.
-Когда закончишь, скажи "ГОТОВО".
 """,
-            description="Единственное рабочее состояние"
-        )
-    ]
-    
-    transitions = [
-        Transition(
-            from_state="work",
-            to_state="END",
-            condition=Conditions.contains_keyword("ГОТОВО", case_sensitive=False),
-            description="Завершение работы по ключевому слову"
+            transitions=["END"],
+            description="Единственное рабочее состояние",
         )
     ]

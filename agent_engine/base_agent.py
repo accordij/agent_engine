@@ -1,56 +1,39 @@
 """Базовый класс для конфигурации агентов."""
 from typing import Any, Dict
 from .graph_builder import AgentGraphBuilder
-from .state import State, Transition
+from .state import State
 
 
 class AgentConfig:
     """Базовый класс для конфигурации агента.
     
     Наследуйтесь от этого класса и определите:
-    - states: список состояний State
-    - transitions: список переходов Transition  
+    - states: список состояний State (с transitions внутри)
     - entry_point: имя начального состояния
     
     Пример:
         class MyAgent(AgentConfig):
             entry_point = "work"
-            
             states = [
-                State(name="work", tools=["calculator"], prompt="..."),
-                State(name="summarize", tools=["summarize"], prompt="...")
-            ]
-            
-            transitions = [
-                Transition(from_state="work", to_state="summarize", ...),
-                Transition(from_state="summarize", to_state="END", ...)
+                State(name="work", tools=["calculator"], prompt="...",
+                      transitions=["summarize"]),
+                State(name="summarize", tools=["summarize"], prompt="...",
+                      transitions=["END"]),
             ]
         
-        # Использование
         agent = MyAgent(llm, tools_dict)
         result = agent.invoke(["Посчитай 2+2"])
-        print(result['messages'][-1].content)
     """
     
-    # Переопределяются в подклассах
     states: list[State] = []
-    transitions: list[Transition] = []
     entry_point: str | None = None
     
     def __init__(self, llm, tools_dict: Dict[str, Any], agent_id: str | None = None):
-        """Инициализирует агента.
-        
-        Args:
-            llm: Языковая модель (ChatOpenAI, GigaChat и т.д.)
-            tools_dict: Словарь {имя_инструмента: объект_инструмента}
-            agent_id: Уникальный идентификатор агента (опционально)
-        """
         self.llm = llm
         self.tools_dict = tools_dict
         self.agent_id = agent_id or f"{self.__class__.__name__}_{id(self)}"
         self._graph = None
         
-        # Валидация конфигурации
         if not self.states:
             raise ValueError(
                 f"{self.__class__.__name__}: Не определены состояния. "
@@ -63,14 +46,9 @@ class AgentConfig:
             )
     
     def build(self):
-        """Собирает и возвращает скомпилированный граф агента.
-        
-        Returns:
-            Скомпилированный граф LangGraph
-        """
+        """Собирает и возвращает скомпилированный граф агента."""
         builder = AgentGraphBuilder(self.llm, self.tools_dict)
         builder.add_states(self.states)
-        builder.add_transitions(self.transitions)
         builder.set_entry(self.entry_point)
         
         self._graph = builder.build()
@@ -78,78 +56,43 @@ class AgentConfig:
     
     @property
     def graph(self):
-        """Возвращает граф (собирает если еще не собран).
-        
-        Returns:
-            Скомпилированный граф LangGraph
-        """
+        """Возвращает граф (собирает если ещё не собран)."""
         if self._graph is None:
             self.build()
         return self._graph
     
     def invoke(self, messages: list[str] | dict, config: dict | None = None) -> dict:
-        """Запускает агента с сообщениями.
-        
-        Args:
-            messages: Список текстовых сообщений или готовый state dict
-            config: Конфигурация для LangGraph (опционально)
-            
-        Returns:
-            Финальное состояние агента с ключами 'messages' и 'memory'
-            
-        Примеры:
-            # Простой запуск
-            result = agent.invoke(["Посчитай 2+2"])
-            
-            # С готовым state
-            result = agent.invoke({
-                'messages': ["Привет"],
-                'memory': {'key': 'value'}
-            })
-        """
-        # Преобразуем входные данные в state
+        """Запускает агента с сообщениями."""
         if isinstance(messages, dict):
             state = messages
         else:
-            state = {'messages': messages, 'memory': {}}
+            state = {'messages': messages, 'memory': {}, 'summary': ''}
         
-        return self.graph.invoke(state, config=config)
+        default_config = {"recursion_limit": 100}
+        if config:
+            default_config.update(config)
+        
+        return self.graph.invoke(state, config=default_config)
     
     def stream(self, messages: list[str] | dict, config: dict | None = None):
-        """Стримит выполнение агента (для отслеживания промежуточных шагов).
-        
-        Args:
-            messages: Список текстовых сообщений или готовый state dict
-            config: Конфигурация для LangGraph (опционально)
-            
-        Yields:
-            Промежуточные состояния агента
-            
-        Пример:
-            for chunk in agent.stream(["Посчитай 2+2"]):
-                print(chunk)
-        """
-        # Преобразуем входные данные в state
+        """Стримит выполнение агента."""
         if isinstance(messages, dict):
             state = messages
         else:
-            state = {'messages': messages, 'memory': {}}
+            state = {'messages': messages, 'memory': {}, 'summary': ''}
         
-        return self.graph.stream(state, config=config)
+        default_config = {"recursion_limit": 100}
+        if config:
+            default_config.update(config)
+        
+        return self.graph.stream(state, config=default_config)
     
     def visualize(self) -> str:
-        """Возвращает текстовое описание графа агента.
-        
-        Returns:
-            Строка с описанием состояний и переходов
-        """
+        """Возвращает текстовое описание графа агента."""
         builder = AgentGraphBuilder(self.llm, self.tools_dict)
         builder.add_states(self.states)
-        builder.add_transitions(self.transitions)
         builder.set_entry(self.entry_point)
-        
         return builder.visualize()
     
     def __repr__(self) -> str:
-        """Строковое представление агента."""
         return f"{self.__class__.__name__}(id={self.agent_id}, states={len(self.states)})"

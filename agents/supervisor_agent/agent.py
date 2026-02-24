@@ -1,29 +1,14 @@
-"""Агент-супервизор для демонстрации мультиагентной системы.
+"""Агент-супервизор для мультиагентной системы."""
 
-Показывает как один агент может вызывать других агентов:
-- Делегирование задач специализированным агентам
-- Агрегация результатов
-- Координация работы нескольких агентов
-"""
-
-from agent_engine import AgentConfig, State, Transition, Conditions
+from agent_engine import AgentConfig, State
 
 
 class SupervisorAgent(AgentConfig):
-    """Агент-супервизор для координации работы других агентов.
-    
-    Граф: [delegate] → [aggregate] → END
-    
-    Демонстрирует:
-    - Вызов других агентов через инструмент call_agent
-    - Делегирование задач специализированным агентам
-    - Агрегация результатов от разных агентов
-    - Мультиагентную архитектуру
+    """Граф: [delegate] → [aggregate] → END
     
     ВАЖНО: Перед использованием нужно зарегистрировать подчиненных агентов:
         from tools.tools import register_agent
         register_agent("test_agent", test_agent_instance)
-        register_agent("router_agent", router_agent_instance)
     """
     
     entry_point = "delegate"
@@ -31,11 +16,7 @@ class SupervisorAgent(AgentConfig):
     states = [
         State(
             name="delegate",
-            tools=[
-                "call_agent",    # Вызов других агентов
-                "memory",        # Сохранение результатов
-                "think"          # Размышления о делегировании
-            ],
+            tools=["call_agent", "memory", "think"],
             prompt="""Ты агент-супервизор, который координирует работу других агентов.
 
 Твои возможности:
@@ -43,24 +24,15 @@ class SupervisorAgent(AgentConfig):
 - memory: сохранить результаты работы агентов
 - think: продумать стратегию делегирования
 
-Доступные агенты (проверь через инструмент call_agent):
-- test_agent: простой агент для вычислений
-- router_agent: агент с роутингом для разных типов запросов
-
 Алгоритм работы:
 1. Проанализируй запрос пользователя
 2. Определи какому агенту делегировать задачу
 3. Вызови нужного агента через call_agent(agent_name="...", query="...")
 4. Сохрани результат в память
 5. Если нужно вызвать еще агентов - сделай это
-6. Когда все задачи делегированы, скажи "ДЕЛЕГИРОВАНИЕ_ЗАВЕРШЕНО"
-
-Примеры:
-- "Посчитай 5+5" → вызови test_agent
-- "Привет!" → вызови router_agent (он обработает текст)
-- "Посчитай 10*2 и поздоровайся" → вызови оба агента
 """,
-            description="Делегирование задач специализированным агентам"
+            transitions=["aggregate"],
+            description="Делегирование задач специализированным агентам",
         ),
         
         State(
@@ -73,28 +45,8 @@ class SupervisorAgent(AgentConfig):
 2. Проанализируй полученные данные
 3. Создай итоговый связный ответ пользователю
 4. Используй summarize для создания структурированного ответа
-5. Скажи "АГРЕГАЦИЯ_ЗАВЕРШЕНА"
-
-Стиль: профессиональный, четкий, с указанием какой агент что сделал.
 """,
-            description="Агрегация результатов от агентов"
-        )
-    ]
-    
-    transitions = [
-        # Переход 1: delegate → aggregate
-        Transition(
-            from_state="delegate",
-            to_state="aggregate",
-            condition=Conditions.contains_keyword("ДЕЛЕГИРОВАНИЕ_ЗАВЕРШЕНО", case_sensitive=False),
-            description="Переход к агрегации после делегирования всех задач"
-        ),
-        
-        # Переход 2: aggregate → END
-        Transition(
-            from_state="aggregate",
-            to_state="END",
-            condition=Conditions.contains_keyword("АГРЕГАЦИЯ_ЗАВЕРШЕНА", case_sensitive=False),
-            description="Завершение после агрегации результатов"
+            transitions=["END"],
+            description="Агрегация результатов от агентов",
         )
     ]

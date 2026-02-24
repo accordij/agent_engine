@@ -1,233 +1,297 @@
 """Сборщик графа агента из декларативных описаний."""
-from typing import TypedDict
+import json
+import re
+from typing import TypedDict, Annotated, Any
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool as langchain_tool
 from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
-from .state import State, Transition
+from langgraph.types import Command
+from langgraph.managed import RemainingSteps
+from langgraph.errors import GraphRecursionError
+from .state import State
 from .debug import log_prompts_enabled, log_event, serialize_messages
 
 
 class AgentState(TypedDict):
     """Состояние агента в графе."""
-    messages: list
+    messages: Annotated[list, add_messages]
     memory: dict
+    summary: str
+    remaining_steps: RemainingSteps
+
+
+# Ключ в памяти, куда transition tool записывает решение
+_TRANSITION_KEY = "__transition__"
 
 
 class AgentGraphBuilder:
-    """Строит граф агента из декларативных описаний состояний и переходов.
+    """Строит граф агента из декларативных описаний состояний.
+    
+    Переходы между состояниями реализованы через transition tool:
+    LLM вызывает transition(next_state=..., summary=...) для перехода.
+    Допустимые переходы определяются в State.transitions.
     
     Примеры:
-        # Простой случай
         builder = AgentGraphBuilder(llm, tools_dict)
         graph = (builder
-            .add_state(work_state)
-            .add_state(summarize_state)
-            .add_transition(work_to_summarize)
-            .add_transition(summarize_to_end)
+            .add_state(State(name="work", tools=["calc"], prompt="...", transitions=["summarize"]))
+            .add_state(State(name="summarize", tools=["memory"], prompt="...", transitions=["END"]))
             .set_entry("work")
             .build())
-        
-        # Или с списками
-        builder = AgentGraphBuilder(llm, tools_dict)
-        builder.add_states([work_state, summarize_state])
-        builder.add_transitions(all_transitions)
-        builder.set_entry("work")
-        graph = builder.build()
-    
-    Методы можно вызывать цепочкой (fluent interface).
     """
     
-    def __init__(self, llm, all_tools: dict[str, any]):
-        """Инициализирует сборщик графа.
-        
-        Args:
-            llm: Языковая модель
-            all_tools: Словарь {имя_инструмента: объект_инструмента}
-        """
+    def __init__(self, llm, all_tools: dict[str, Any]):
         self.llm = llm
         self.all_tools = all_tools
         self.states: list[State] = []
-        self.transitions: list[Transition] = []
         self.entry_point: str | None = None
         self._last_state_name: str | None = None
         self._cycle_count: int = 0
     
     def add_state(self, state: State) -> 'AgentGraphBuilder':
-        """Добавляет состояние в граф.
-        
-        Args:
-            state: Описание состояния
-            
-        Returns:
-            self (для цепочки вызовов)
-        """
+        """Добавляет состояние в граф."""
         self.states.append(state)
         return self
     
     def add_states(self, states: list[State]) -> 'AgentGraphBuilder':
-        """Добавляет несколько состояний в граф.
-        
-        Args:
-            states: Список описаний состояний
-            
-        Returns:
-            self (для цепочки вызовов)
-        """
+        """Добавляет несколько состояний в граф."""
         self.states.extend(states)
         return self
     
-    def add_transition(self, transition: Transition) -> 'AgentGraphBuilder':
-        """Добавляет переход между состояниями.
-        
-        Args:
-            transition: Описание перехода
-            
-        Returns:
-            self (для цепочки вызовов)
-        """
-        self.transitions.append(transition)
-        return self
-    
-    def add_transitions(self, transitions: list[Transition]) -> 'AgentGraphBuilder':
-        """Добавляет несколько переходов.
-        
-        Args:
-            transitions: Список описаний переходов
-            
-        Returns:
-            self (для цепочки вызовов)
-        """
-        self.transitions.extend(transitions)
-        return self
-    
     def set_entry(self, state_name: str) -> 'AgentGraphBuilder':
-        """Устанавливает точку входа в граф.
-        
-        Args:
-            state_name: Имя состояния, с которого начинается граф
-            
-        Returns:
-            self (для цепочки вызовов)
-        """
+        """Устанавливает точку входа в граф."""
         self.entry_point = state_name
         return self
     
     def build(self):
-        """Собирает и компилирует граф из описаний.
-        
-        Returns:
-            Скомпилированный граф LangGraph
-            
-        Raises:
-            ValueError: Если не указана точка входа или есть ошибки в конфигурации
-        """
+        """Собирает и компилирует граф."""
         if not self.entry_point:
             raise ValueError("Точка входа не установлена. Используйте set_entry()")
-        
         if not self.states:
-            raise ValueError("Нет состояний. Добавьте хотя бы одно состояние через add_state()")
+            raise ValueError("Нет состояний. Добавьте хотя бы одно через add_state()")
         
-        # Создаем граф
         workflow = StateGraph(AgentState)
         
-        # Создаем узлы для каждого состояния
         for state in self.states:
             node_function = self._create_node_function(state)
             workflow.add_node(state.name, node_function)
         
-        # Устанавливаем точку входа
         workflow.set_entry_point(self.entry_point)
         
-        # Добавляем переходы
-        for transition in self.transitions:
-            self._add_transition_to_workflow(workflow, transition)
-        
-        # Компилируем и возвращаем
         return workflow.compile()
     
-    def _create_node_function(self, state: State):
-        """Создает функцию узла для состояния.
+    def _make_transition_tool(self, state: State):
+        """Создаёт transition tool для конкретного состояния.
         
-        Args:
-            state: Описание состояния
-            
-        Returns:
-            Функция узла для LangGraph
+        Tool знает допустимые переходы и возвращает ошибку с подсказкой,
+        если LLM указала невалидное состояние.
         """
-        # Получаем инструменты для этого состояния
+        allowed = ["stay"] + state.transitions
+        allowed_str = ", ".join(f'"{t}"' for t in allowed)
+        state_name = state.name
+
+        @langchain_tool
+        def transition(next_state: str, summary: str, reasoning: str) -> str:
+            """Переход в другое состояние агента. Вызови когда текущая задача завершена.
+            
+            Args:
+                next_state: Куда перейти. "stay" — остаться в текущем состоянии.
+                summary: Краткое резюме проделанной работы и напутствие следующему состоянию. Обязательно укажи какие ключи сохранены в memory.
+                reasoning: Почему принято решение о переходе.
+            """
+            from tools.tools import _memory_store
+            
+            if next_state not in allowed:
+                memory_keys = sorted(list(_memory_store.keys()))
+                return (
+                    f"Ошибка: переход в '{next_state}' недоступен из состояния '{state_name}'. "
+                    f"Доступные переходы: {allowed_str}. "
+                    f"Текущие ключи в памяти: {memory_keys}"
+                )
+            
+            _memory_store[_TRANSITION_KEY] = {
+                "next_state": next_state,
+                "summary": summary,
+                "reasoning": reasoning,
+            }
+            
+            memory_keys = sorted(
+                k for k in _memory_store.keys() if k != _TRANSITION_KEY
+            )
+            
+            log_event(
+                "transition_tool",
+                {
+                    "from_state": state_name,
+                    "next_state": next_state,
+                    "summary": summary,
+                    "reasoning": reasoning,
+                    "memory_keys": memory_keys,
+                },
+            )
+            
+            return (
+                f"OK: переход в '{next_state}' подтверждён. "
+                f"Не вызывай больше инструментов — напиши финальный ответ."
+            )
+        
+        return transition
+    
+    def _build_transition_prompt_section(self, state: State) -> str:
+        """Генерирует секцию промпта про переходы для состояния."""
+        allowed = state.transitions
+        if not allowed:
+            return ""
+        
+        transitions_list = "\n".join(f'  - "{t}"' for t in allowed)
+        return f"""
+
+## Переход в другое состояние
+Когда задача в текущем состоянии выполнена, вызови инструмент transition:
+- next_state: одно из доступных значений:
+  - "stay" — остаться в текущем состоянии (нужно ещё поработать)
+{transitions_list}
+- summary: что было сделано и что нужно сделать в следующем состоянии. Укажи какие ключи сохранены в memory.
+- reasoning: почему переходишь именно туда.
+
+ВАЖНО: после вызова transition не вызывай другие инструменты — напиши финальный ответ."""
+
+    def _summarize_for_reentry(self, messages: list, state_name: str) -> str:
+        """Суммаризация при повторном входе в состояние (лимит шагов)."""
+        from tools.tools import _memory_store
+        
+        memory_keys = sorted(
+            k for k in _memory_store.keys() if k != _TRANSITION_KEY
+        )
+        
+        last_content = ""
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                last_content = msg.content[:500]
+                break
+        
+        summary = (
+            f"Продолжение работы в состоянии '{state_name}'. "
+            f"Последний ответ агента: {last_content}. "
+            f"Ключи в памяти: {memory_keys}. "
+            f"Используй memory(action='get', key='...') для получения нужных данных."
+        )
+        
+        log_event(
+            "auto_summarization",
+            {
+                "state": state_name,
+                "memory_keys": memory_keys,
+                "summary_length": len(summary),
+            },
+        )
+        
+        return summary
+    
+    def _create_node_function(self, state: State):
+        """Создает функцию узла для состояния."""
         state_tools = [self.all_tools[name] for name in state.tools 
                       if name in self.all_tools]
         
         if not state_tools:
-            print(f"⚠️ Предупреждение: состояние '{state.name}' не имеет инструментов")
+            print(f"Предупреждение: состояние '{state.name}' не имеет инструментов")
         
-        # Создаем ReAct агента для этого состояния
-        agent = create_react_agent(self.llm, state_tools)
+        transition_tool = self._make_transition_tool(state)
+        all_node_tools = state_tools + [transition_tool]
         
-        def _strip_tool_calls(messages: list) -> list:
-            """Убирает системные сообщения и другие из истории, оставляя только результаты."""
-            cleaned = []
-            for msg in messages:
-                if isinstance(msg, SystemMessage):
-                    # не берем системные сообщения в историю
-                    continue
-                if isinstance(msg, AIMessage):
-                    # можно оставть только результаты
-                    cleaned.append(AIMessage(content=msg.content))
-                    # cleaned.append(msg)
-                    continue
-                if isinstance(msg, HumanMessage):
-                    cleaned.append(msg)
-                    continue
-                if isinstance(msg, ToolMessage):
-                    # сообщения с tools пока пропустим
-                    # cleaned.append(msg)
-                    continue
-                cleaned.append(msg)
-            return cleaned
+        agent = create_react_agent(self.llm, all_node_tools)
+        
+        full_prompt = state.prompt + self._build_transition_prompt_section(state)
 
-        def node_function(agent_state: AgentState) -> AgentState:
-            """Функция узла состояния."""
+        def node_function(state_data: AgentState) -> Command:
+            """Функция узла состояния. Возвращает Command для маршрутизации."""
             self._cycle_count += 1
             step = self._cycle_count
             prev_state = self._last_state_name or "START"
+            
             if self._last_state_name != state.name:
                 if log_prompts_enabled():
                     print(f"[STATE] {prev_state} -> {state.name}")
                 self._last_state_name = state.name
-
+            
+            remaining = state_data.get("remaining_steps", 50)
+            
             log_event(
                 "state_transition",
                 {
                     "from_state": prev_state,
                     "to_state": state.name,
-                    "message_count": len(agent_state.get("messages", [])),
-                    "memory_keys": sorted(list((agent_state.get("memory") or {}).keys())),
+                    "message_count": len(state_data.get("messages", [])),
+                    "memory_keys": sorted(list((state_data.get("memory") or {}).keys())),
+                    "remaining_steps": remaining,
                 },
                 step=step,
                 state=state.name,
             )
-            # On enter hook
-            if state.on_enter:
-                agent_state = state.on_enter(agent_state)
             
-            # Убираем все системные сообщения, чистим tool_calls и добавляем актуальный промпт состояния
-            messages = _strip_tool_calls(agent_state['messages'])
-            messages = [SystemMessage(content=state.prompt)] + messages
-
+            if state.on_enter:
+                state_data = state.on_enter(state_data)
+            
+            # Собираем сообщения: system prompt + original query + context
+            summary = state_data.get("summary", "")
+            messages = [SystemMessage(content=full_prompt)]
+            
+            # Всегда ищем оригинальный запрос пользователя
+            existing = state_data.get("messages", [])
+            original_query = None
+            for msg in existing:
+                if isinstance(msg, HumanMessage):
+                    original_query = msg
+                    break
+            
+            if summary:
+                if original_query:
+                    messages.append(original_query)
+                messages.append(HumanMessage(content=f"Контекст из предыдущего состояния:\n{summary}"))
+            else:
+                for msg in existing:
+                    if isinstance(msg, SystemMessage):
+                        continue
+                    messages.append(msg)
+            
             log_event(
                 "llm_request",
                 {
-                    "state_prompt": state.prompt,
                     "messages": serialize_messages(messages),
+                    "has_summary": bool(summary),
                 },
                 step=step,
                 state=state.name,
             )
             
-            # Отправляем запрос к LLM (вызов агента)
-            result = agent.invoke({'messages': messages})
-
+            # Очищаем предыдущий transition из памяти
+            from tools.tools import _memory_store
+            _memory_store.pop(_TRANSITION_KEY, None)
+            
+            # Запускаем ReAct-агент
+            try:
+                result = agent.invoke(
+                    {"messages": messages},
+                    config={"recursion_limit": 25},
+                )
+            except GraphRecursionError:
+                auto_summary = self._summarize_for_reentry(messages, state.name)
+                
+                if log_prompts_enabled():
+                    print(f"[REENTRY] Лимит шагов, суммаризация -> {state.name}")
+                
+                new_state = {
+                    "summary": auto_summary,
+                    "memory": dict(_memory_store),
+                }
+                
+                if state.on_exit:
+                    new_state = state.on_exit(new_state)
+                
+                return Command(goto=state.name, update=new_state)
+            
             log_event(
                 "llm_response",
                 {
@@ -237,111 +301,152 @@ class AgentGraphBuilder:
                 state=state.name,
             )
             
-            # Синхронизируем глобальную память инструмента с состоянием
-            from tools.tools import _memory_store
+            # Проверяем, был ли вызван transition tool
+            transition_decision = _memory_store.pop(_TRANSITION_KEY, None)
             
-            # Формируем новое состояние
-            new_state = {
-                'messages': result['messages'],
-                'memory': dict(_memory_store)  # Копируем текущее состояние памяти
+            new_state: dict[str, Any] = {
+                "memory": dict(_memory_store),
             }
             
-            # On exit hook
             if state.on_exit:
                 new_state = state.on_exit(new_state)
             
-            return new_state
+            if transition_decision:
+                next_target = transition_decision["next_state"]
+                transition_summary = transition_decision["summary"]
+                
+                memory_keys = sorted(
+                    k for k in _memory_store.keys() if k != _TRANSITION_KEY
+                )
+                context = (
+                    f"{transition_summary}\n"
+                    f"Ключи в памяти: {memory_keys}. "
+                    f"Используй memory(action='get', key='...') для получения данных."
+                )
+                
+                if next_target == "stay":
+                    new_state["summary"] = context
+                    return Command(goto=state.name, update=new_state)
+                
+                if next_target == "END":
+                    last_msg = self._get_last_ai_message(result["messages"])
+                    new_state["messages"] = [last_msg] if last_msg else result["messages"]
+                    new_state["summary"] = ""
+                    return Command(goto=END, update=new_state)
+                
+                new_state["summary"] = context
+                return Command(goto=next_target, update=new_state)
+            
+            # Fallback: модель могла написать transition как текст
+            fallback = self._parse_transition_from_text(
+                result["messages"], state.transitions
+            )
+            if fallback:
+                next_target = fallback["next_state"]
+                transition_summary = fallback["summary"]
+                
+                memory_keys = sorted(
+                    k for k in _memory_store.keys() if k != _TRANSITION_KEY
+                )
+                context = (
+                    f"{transition_summary}\n"
+                    f"Ключи в памяти: {memory_keys}. "
+                    f"Используй memory(action='get', key='...') для получения данных."
+                )
+                
+                if next_target == "stay":
+                    new_state["summary"] = context
+                    return Command(goto=state.name, update=new_state)
+                
+                if next_target == "END":
+                    last_msg = self._get_last_ai_message(result["messages"])
+                    new_state["messages"] = [last_msg] if last_msg else result["messages"]
+                    new_state["summary"] = ""
+                    return Command(goto=END, update=new_state)
+                
+                new_state["summary"] = context
+                return Command(goto=next_target, update=new_state)
+            
+            # Transition не вызван — остаёмся в текущем состоянии
+            if log_prompts_enabled():
+                print(f"[WARN] Transition не вызван в '{state.name}', остаёмся")
+            
+            new_state["summary"] = self._summarize_for_reentry(
+                result["messages"], state.name
+            )
+            return Command(goto=state.name, update=new_state)
         
         return node_function
     
-    def _add_transition_to_workflow(self, workflow: StateGraph, transition: Transition):
-        """Добавляет переход в workflow.
+    def _parse_transition_from_text(self, messages: list, allowed: list[str]) -> dict | None:
+        """Fallback: ищет transition-решение в тексте последнего AIMessage.
         
-        Args:
-            workflow: Граф LangGraph
-            transition: Описание перехода
+        Некоторые модели (особенно локальные) пишут вызов transition как текст
+        вместо function call. Пытаемся извлечь JSON с next_state.
         """
-        # Случай 1: Роутер (несколько возможных целевых состояний)
-        if transition.routes:
-            if not transition.condition:
-                raise ValueError(
-                    f"Переход-роутер из '{transition.from_state}' требует condition"
-                )
-            
-            workflow.add_conditional_edges(
-                transition.from_state,
-                transition.condition,
-                transition.routes
-            )
+        all_allowed = allowed + ["stay"]
         
-        # Случай 2: Условный переход (возврат в себя или переход дальше)
-        elif transition.condition and transition.to_state:
-            def make_conditional(trans):
-                def condition_wrapper(state: AgentState) -> str:
-                    # Если условие True → переходим, иначе остаемся
-                    result = trans.condition(state)
-                    if result:
-                        return trans.to_state
-                    else:
-                        return trans.from_state
-                return condition_wrapper
+        for msg in reversed(messages):
+            if not isinstance(msg, AIMessage) or not msg.content:
+                continue
+            content = msg.content
             
-            # Если целевое состояние - END, используем константу END
-            target = END if transition.to_state == "END" else transition.to_state
+            # Ищем все JSON-подобные фрагменты с next_state
+            for match in re.finditer(r'\{[^{}]*"next_state"[^{}]*\}', content):
+                try:
+                    data = json.loads(match.group())
+                except json.JSONDecodeError:
+                    # JSON с escaped кавычками — чистим и пробуем снова
+                    cleaned = match.group()
+                    try:
+                        data = json.loads(cleaned.replace('\\"', '"'))
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+                
+                next_state = data.get("next_state", "")
+                if next_state in all_allowed:
+                    if log_prompts_enabled():
+                        print(f"[FALLBACK] Transition из текста: {next_state}")
+                    return {
+                        "next_state": next_state,
+                        "summary": data.get("summary", ""),
+                        "reasoning": data.get("reasoning", ""),
+                    }
             
-            workflow.add_conditional_edges(
-                transition.from_state,
-                make_conditional(transition),
-                {
-                    transition.from_state: transition.from_state,
-                    transition.to_state: target
-                }
-            )
-        
-        # Случай 3: Безусловный переход
-        elif transition.to_state:
-            if transition.to_state == "END":
-                workflow.add_edge(transition.from_state, END)
-            else:
-                workflow.add_edge(transition.from_state, transition.to_state)
-        
-        else:
-            raise ValueError(
-                f"Неверная конфигурация перехода из '{transition.from_state}': "
-                f"нужно указать to_state или routes"
-            )
+            # Ещё один fallback: ищем "next_state":"END" в произвольном тексте
+            for target in allowed:
+                pattern = rf'"next_state"\s*:\s*"{re.escape(target)}"'
+                if re.search(pattern, content):
+                    if log_prompts_enabled():
+                        print(f"[FALLBACK] Transition из текста (regex): {target}")
+                    summary_match = re.search(r'"summary"\s*:\s*"([^"]*(?:\\"[^"]*)*)"', content)
+                    return {
+                        "next_state": target,
+                        "summary": summary_match.group(1).replace('\\"', '"') if summary_match else "",
+                        "reasoning": "",
+                    }
+        return None
+    
+    def _get_last_ai_message(self, messages: list) -> AIMessage | None:
+        """Находит последнее осмысленное AIMessage."""
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                if not msg.tool_calls:
+                    return AIMessage(content=msg.content)
+        return None
     
     def visualize(self) -> str:
-        """Возвращает текстовое представление графа.
+        """Возвращает текстовое представление графа."""
+        lines = ["Граф агента:", ""]
         
-        Returns:
-            Строка с описанием состояний и переходов
-        """
-        lines = ["📊 Граф агента:", ""]
-        
-        # Состояния
         lines.append("Состояния:")
-        for state in self.states:
-            entry_marker = " (entry)" if state.name == self.entry_point else ""
-            lines.append(f"  • {state.name}{entry_marker}")
-            lines.append(f"    Инструменты: {', '.join(state.tools)}")
-            if state.description:
-                lines.append(f"    Описание: {state.description}")
-        
-        lines.append("")
-        
-        # Переходы
-        lines.append("Переходы:")
-        for trans in self.transitions:
-            if trans.routes:
-                routes_str = ", ".join(f"{k}→{v}" for k, v in trans.routes.items())
-                lines.append(f"  • {trans.from_state} → [{routes_str}]")
-            elif trans.condition:
-                lines.append(f"  • {trans.from_state} → {trans.to_state} (условный)")
-            else:
-                lines.append(f"  • {trans.from_state} → {trans.to_state}")
-            
-            if trans.description:
-                lines.append(f"    {trans.description}")
+        for s in self.states:
+            entry_marker = " (entry)" if s.name == self.entry_point else ""
+            lines.append(f"  - {s.name}{entry_marker}")
+            lines.append(f"    Инструменты: {', '.join(s.tools)}")
+            if s.transitions:
+                lines.append(f"    Переходы: {', '.join(s.transitions)}")
+            if s.description:
+                lines.append(f"    Описание: {s.description}")
         
         return "\n".join(lines)
