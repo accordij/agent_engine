@@ -32,4 +32,4 @@ debug:
 
 # Настройки агента
 agent:
-  recursion_limit: 70
+  recursion_limit: 30

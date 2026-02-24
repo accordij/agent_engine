@@ -173,14 +173,15 @@ class AgentGraphBuilder:
                     continue
                 if isinstance(msg, AIMessage):
                     # можно оставть только результаты
-                    # cleaned.append(AIMessage(content=msg.content))
-                    cleaned.append(msg)
+                    cleaned.append(AIMessage(content=msg.content))
+                    # cleaned.append(msg)
                     continue
                 if isinstance(msg, HumanMessage):
                     cleaned.append(msg)
                     continue
                 if isinstance(msg, ToolMessage):
-                    cleaned.append(msg)
+                    # сообщения с tools пока пропустим
+                    # cleaned.append(msg)
                     continue
                 cleaned.append(msg)
             return cleaned
