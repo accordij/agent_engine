@@ -1,13 +1,13 @@
 """Математический агент с двумя состояниями."""
 
-from agent_engine import AgentConfig, State
+from src.agent_engine import AgentConfig, State
 
 
 class MyAgent(AgentConfig):
     """Граф: [work] → [summarize] → END"""
-    
+
     entry_point = "work"
-    
+
     states = [
         State(
             name="work",
@@ -30,7 +30,7 @@ class MyAgent(AgentConfig):
             transitions=["summarize"],
             description="Основное рабочее состояние с полным набором инструментов",
         ),
-        
+
         State(
             name="summarize",
             tools=["summarize", "memory"],

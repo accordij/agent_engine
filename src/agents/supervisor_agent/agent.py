@@ -1,18 +1,18 @@
 """Агент-супервизор для мультиагентной системы."""
 
-from agent_engine import AgentConfig, State
+from src.agent_engine import AgentConfig, State
 
 
 class SupervisorAgent(AgentConfig):
     """Граф: [delegate] → [aggregate] → END
-    
+
     ВАЖНО: Перед использованием нужно зарегистрировать подчиненных агентов:
-        from tools.tools import register_agent
+        from src.tools.tools import register_agent
         register_agent("test_agent", test_agent_instance)
     """
-    
+
     entry_point = "delegate"
-    
+
     states = [
         State(
             name="delegate",
@@ -54,7 +54,7 @@ class SupervisorAgent(AgentConfig):
                 ("delegation_notes", "Текущие заметки делегирования: "),
             ],
         ),
-        
+
         State(
             name="aggregate",
             tools=["memory", "summarize", "think"],

@@ -1,13 +1,13 @@
 """Простейший тестовый агент с одним состоянием."""
 
-from agent_engine import AgentConfig, State
+from src.agent_engine import AgentConfig, State
 
 
 class TestAgent(AgentConfig):
     """Граф: [work] → END"""
-    
+
     entry_point = "work"
-    
+
     states = [
         State(
             name="work",

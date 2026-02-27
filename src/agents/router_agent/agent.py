@@ -1,13 +1,13 @@
 """Агент с роутингом — выбор пути в зависимости от типа запроса."""
 
-from agent_engine import AgentConfig, State
+from src.agent_engine import AgentConfig, State
 
 
 class RouterAgent(AgentConfig):
     """Граф: [classify] → [math | text | error] → END"""
-    
+
     entry_point = "classify"
-    
+
     states = [
         State(
             name="classify",
@@ -32,7 +32,7 @@ class RouterAgent(AgentConfig):
                 ("request_type", "Тип запроса уже определен: "),
             ],
         ),
-        
+
         State(
             name="math",
             tools=["calculator", "memory", "think"],
@@ -51,7 +51,7 @@ class RouterAgent(AgentConfig):
                 ("result", "Предыдущий результат вычислений: "),
             ],
         ),
-        
+
         State(
             name="text",
             tools=["memory", "think"],
@@ -69,7 +69,7 @@ class RouterAgent(AgentConfig):
                 ("response_text", "Черновик ответа уже есть: "),
             ],
         ),
-        
+
         State(
             name="error",
             tools=["think"],

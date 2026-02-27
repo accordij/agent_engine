@@ -4,8 +4,8 @@
 когда перейти и вызывает transition(next_state=..., summary=...).
 
 Пример:
-    from agent_engine import State, AgentGraphBuilder, AgentConfig
-    
+    from src.agent_engine import State, AgentGraphBuilder, AgentConfig
+
     class MyAgent(AgentConfig):
         entry_point = "work"
         states = [
@@ -30,8 +30,8 @@ from .base_agent import AgentConfig
 from .logging_utils import init_logging
 
 __all__ = [
-    'State',
-    'AgentGraphBuilder',
-    'AgentConfig',
-    'init_logging',
+    "State",
+    "AgentGraphBuilder",
+    "AgentConfig",
+    "init_logging",
 ]

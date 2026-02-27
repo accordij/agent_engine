@@ -21,7 +21,7 @@ class MemoryInjection:
 @dataclass
 class State:
     """Декларативное описание состояния агента.
-    
+
     Примеры:
         State(
             name="work",
@@ -30,7 +30,7 @@ class State:
             transitions=["summarize", "clarify"],
             description="Основное рабочее состояние"
         )
-    
+
     Атрибуты:
         name: Уникальное имя состояния (используется в графе)
         tools: Список имен инструментов, доступных в этом состоянии

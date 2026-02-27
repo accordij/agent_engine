@@ -118,6 +118,7 @@ def load_logging_config(config_path: str = "config.yaml") -> dict:
         _config = {}
     return _config
 
+
 def get_level() -> str:
     return _config.get("level", "off")
 
@@ -365,6 +366,7 @@ def init_logging(config_path: str = "config.yaml") -> None:
         except Exception as e:
             log_warning(f"MLflow init failed: {e}")
     _emit(f"[info]logging: level={get_level()}[/]")
+
 
 def create_callbacks() -> tuple[list, AgentCallbackHandler | None]:
     if not is_enabled():

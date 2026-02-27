@@ -18,7 +18,7 @@ GIGA_LAST_INVOKE = 0
 
 class GigaChatDelayed(GigaChat):
     """GigaChat с учетом rate limiter (задержка между запросами)."""
-    
+
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -60,37 +60,37 @@ class GigaChatDelayed(GigaChat):
 def get_gigachat_client(config: dict):
     """
     Создает клиент GigaChat на основе конфигурации.
-    
+
     Args:
         config: словарь с настройками GigaChat из config.yaml
-    
+
     Returns:
         GigaChatDelayed: клиент для работы с GigaChat
     """
     return GigaChatDelayed(
-        base_url=os.getenv(config['env_vars']['base_url']),
-        access_token=os.getenv(config['env_vars']['access_token']),
-        model=config['model'],
-        temperature=config['temperature'],
-        timeout=config['timeout']
+        base_url=os.getenv(config["env_vars"]["base_url"]),
+        access_token=os.getenv(config["env_vars"]["access_token"]),
+        model=config["model"],
+        temperature=config["temperature"],
+        timeout=config["timeout"]
     )
 
 
 def get_lmstudio_client(config: dict):
     """
     Создает клиент LM Studio (OpenAI-совместимый) на основе конфигурации.
-    
+
     Args:
         config: словарь с настройками LM Studio из config.yaml
-    
+
     Returns:
         ChatOpenAI: клиент для работы с LM Studio
     """
     return ChatOpenAI(
-        base_url=config['base_url'],
-        model=config['model'],
-        temperature=config['temperature'],
-        timeout=config['timeout'],
+        base_url=config["base_url"],
+        model=config["model"],
+        temperature=config["temperature"],
+        timeout=config["timeout"],
         api_key="not-needed"  # LM Studio не требует API ключ
     )
 
@@ -98,17 +98,17 @@ def get_lmstudio_client(config: dict):
 def get_llm_client(backend: str, config: dict):
     """
     Фабричная функция для получения LLM клиента.
-    
+
     Args:
         backend: тип бэкенда ("gigachat" или "lmstudio")
         config: полная конфигурация из config.yaml
-    
+
     Returns:
         LLM клиент (GigaChatDelayed или ChatOpenAI)
     """
     if backend == "gigachat":
-        return get_gigachat_client(config['backends']['gigachat'])
+        return get_gigachat_client(config["backends"]["gigachat"])
     elif backend == "lmstudio":
-        return get_lmstudio_client(config['backends']['lmstudio'])
+        return get_lmstudio_client(config["backends"]["lmstudio"])
     else:
         raise ValueError(f"Неизвестный бэкенд: {backend}. Используйте 'gigachat' или 'lmstudio'.")

@@ -1,15 +1,15 @@
 """Агент аудита файлов проверки."""
 
-from agent_engine import AgentConfig, State
+from src.agent_engine import AgentConfig, State
 
 
 class AuditAgent(AgentConfig):
     """Граф: [start_work] → [analize_word] → [analize_sql] → [analize_py]
           → [self_check] ⟳ → [write_report] → END
     """
-    
+
     entry_point = "start_work"
-    
+
     states = [
         State(
             name="start_work",
@@ -57,7 +57,7 @@ class AuditAgent(AgentConfig):
                 ("py_files", "Python файлы уже определены: "),
             ],
         ),
-        
+
 #         State(
 #             name="analize_word",
 #             tools=["read_docx_structure", "memory", "think"],
@@ -72,7 +72,7 @@ class AuditAgent(AgentConfig):
 #             transitions=["analize_sql"],
 #             description="Анализ docx файлов: реплики и таблицы",
 #         ),
-        
+
         State(
             name="analize_sql",
             tools=["read_sql_file", "memory", "think"],
@@ -102,7 +102,7 @@ class AuditAgent(AgentConfig):
                 ("sql_verdicts", "Анализ SQL уже сделан: "),
             ],
         ),
-        
+
         State(
             name="analize_py",
             tools=["read_py_file", "memory", "think"],
@@ -123,7 +123,7 @@ class AuditAgent(AgentConfig):
                 ("py_verdicts", "Анализ Python уже сделан: "),
             ],
         ),
-        
+
         State(
             name="self_check",
             tools=["memory", "think"],
@@ -144,7 +144,7 @@ class AuditAgent(AgentConfig):
                 ("py_verdicts", "Python вердикты: ", "Python вердикты пока не собраны."),
             ],
         ),
-        
+
         State(
             name="write_report",
             tools=["memory", "summarize"],
