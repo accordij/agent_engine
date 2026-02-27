@@ -11,7 +11,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command
 from langgraph.managed import RemainingSteps
 from langgraph.errors import GraphRecursionError
-from .state import State
+from .state import State, MemoryInjection
 from .logging_utils import (
     log_state_transition,
     log_memory_snapshot,
@@ -129,6 +129,78 @@ class AgentGraphBuilder:
 
 ВАЖНО: после вызова transition не вызывай другие инструменты — напиши финальный ответ."""
 
+    def _normalize_memory_injection(self, raw: Any, state_name: str) -> dict[str, str | None] | None:
+        """Приводит декларацию memory injection к единому формату.
+
+        Поддерживаются:
+        - "key"
+        - ("key", "if_exists")
+        - ("key", "if_exists", "if_missing")
+        - {"key": "...", "if_exists": "...", "if_missing": "..."}
+        - MemoryInjection(...)
+        """
+        if isinstance(raw, str):
+            key = raw.strip()
+            return {"key": key, "if_exists": None, "if_missing": None} if key else None
+
+        if isinstance(raw, MemoryInjection):
+            key = (raw.key or "").strip()
+            if not key:
+                return None
+            return {"key": key, "if_exists": raw.if_exists, "if_missing": raw.if_missing}
+
+        if isinstance(raw, (tuple, list)):
+            if not raw:
+                return None
+            key = str(raw[0]).strip()
+            if not key:
+                return None
+            if_exists = str(raw[1]) if len(raw) > 1 and raw[1] is not None else None
+            if_missing = str(raw[2]) if len(raw) > 2 and raw[2] is not None else None
+            return {"key": key, "if_exists": if_exists, "if_missing": if_missing}
+
+        if isinstance(raw, dict):
+            key = str(raw.get("key", "")).strip()
+            if not key:
+                return None
+            if_exists = raw.get("if_exists")
+            if_missing = raw.get("if_missing")
+            return {
+                "key": key,
+                "if_exists": str(if_exists) if if_exists is not None else None,
+                "if_missing": str(if_missing) if if_missing is not None else None,
+            }
+
+        log_warning(
+            f"Некорректный memory_injection в '{state_name}': {type(raw).__name__}. "
+            "Ожидается str/tuple/list/dict/MemoryInjection."
+        )
+        return None
+
+    def _build_memory_injection_messages(self, state: State) -> list[HumanMessage]:
+        """Формирует служебные сообщения по ключам memory_injections для текущего state."""
+        from tools.tools import _memory_store
+
+        result: list[HumanMessage] = []
+        raw_rules = state.memory_injections or []
+        for raw in raw_rules:
+            rule = self._normalize_memory_injection(raw, state.name)
+            if not rule:
+                continue
+
+            key = rule["key"]
+            if key in _memory_store:
+                value = _memory_store.get(key)
+                if_exists = rule["if_exists"] or f"{key}: "
+                text = f"{if_exists}{value}"
+                result.append(HumanMessage(content=f"Контекст из памяти:\n{text}"))
+                continue
+
+            if rule["if_missing"]:
+                result.append(HumanMessage(content=f"Контекст из памяти:\n{rule['if_missing']}"))
+
+        return result
+
     def _summarize_for_reentry(self, messages: list, state_name: str) -> str:
         from tools.tools import _memory_store
         
@@ -195,6 +267,8 @@ class AgentGraphBuilder:
                     if isinstance(msg, SystemMessage):
                         continue
                     messages.append(msg)
+
+            messages.extend(self._build_memory_injection_messages(state))
             
             from tools.tools import _memory_store
             _memory_store.pop(_TRANSITION_KEY, None)

@@ -48,6 +48,14 @@ class AuditAgent(AgentConfig):
             # transitions=["analize_word"],
             transitions=["analize_sql"],
             description="Поиск папки проверки и сбор списка файлов",
+            memory_injections=[
+                ("case_id", "Проверка уже определена: "),
+                ("case_folder", "Папка проверки уже найдена: "),
+                ("case_files", "Файлы проверки уже собраны: "),
+                ("docx_files", "DOCX файлы уже определены: "),
+                ("sql_files", "SQL файлы уже определены: "),
+                ("py_files", "Python файлы уже определены: "),
+            ],
         ),
         
 #         State(
@@ -88,6 +96,11 @@ class AuditAgent(AgentConfig):
 """,
             transitions=["analize_py", "start_work"],
             description="Анализ SQL скриптов на риски и проблемы",
+            memory_injections=[
+                ("case_files", "Из памяти доступны файлы проверки: ", "Список case_files пока отсутствует."),
+                ("sql_files", "SQL для анализа уже определены: ", "SQL анализ еще не может стартовать: sql_files отсутствует."),
+                ("sql_verdicts", "Анализ SQL уже сделан: "),
+            ],
         ),
         
         State(
@@ -105,6 +118,10 @@ class AuditAgent(AgentConfig):
 """,
             transitions=["self_check"],
             description="Анализ Python скриптов на риски и проблемы",
+            memory_injections=[
+                ("py_files", "Python файлы для анализа: ", "Список py_files пока отсутствует."),
+                ("py_verdicts", "Анализ Python уже сделан: "),
+            ],
         ),
         
         State(
@@ -118,6 +135,14 @@ class AuditAgent(AgentConfig):
 """,
             transitions=["analize_word", "analize_sql", "analize_py", "write_report"],
             description="Проверка полноты обработки и выбор следующего шага",
+            memory_injections=[
+                ("case_files", "Полный список файлов кейса: "),
+                ("docx_files", "DOCX файлы: "),
+                ("sql_files", "SQL файлы: "),
+                ("py_files", "Python файлы: "),
+                ("sql_verdicts", "SQL вердикты: ", "SQL вердикты пока не собраны."),
+                ("py_verdicts", "Python вердикты: ", "Python вердикты пока не собраны."),
+            ],
         ),
         
         State(
@@ -134,5 +159,11 @@ class AuditAgent(AgentConfig):
 """,
             transitions=["END"],
             description="Формирование итогового отчета",
+            memory_injections=[
+                ("docx_files", "Отчетный DOCX: "),
+                ("sql_verdicts", "Выводы по SQL: ", "Выводы по SQL пока отсутствуют."),
+                ("py_verdicts", "Выводы по Python: ", "Выводы по Python пока отсутствуют."),
+                ("final_report", "Текущий вариант final_report: "),
+            ],
         )
     ]

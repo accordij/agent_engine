@@ -28,6 +28,9 @@ class RouterAgent(AgentConfig):
 """,
             transitions=["math", "text", "error"],
             description="Классификация типа запроса",
+            memory_injections=[
+                ("request_type", "Тип запроса уже определен: "),
+            ],
         ),
         
         State(
@@ -43,6 +46,10 @@ class RouterAgent(AgentConfig):
 """,
             transitions=["END"],
             description="Обработка математических запросов",
+            memory_injections=[
+                ("request_type", "Роутер определил тип: ", "Тип запроса пока не определен."),
+                ("result", "Предыдущий результат вычислений: "),
+            ],
         ),
         
         State(
@@ -57,6 +64,10 @@ class RouterAgent(AgentConfig):
 """,
             transitions=["END"],
             description="Обработка текстовых запросов",
+            memory_injections=[
+                ("request_type", "Роутер определил тип: ", "Тип запроса пока не определен."),
+                ("response_text", "Черновик ответа уже есть: "),
+            ],
         ),
         
         State(

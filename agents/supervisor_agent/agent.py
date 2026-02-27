@@ -48,6 +48,11 @@ class SupervisorAgent(AgentConfig):
 """,
             transitions=["aggregate"],
             description="Делегирование задач специализированным агентам",
+            memory_injections=[
+                ("request_type", "Тип запроса уже определен: "),
+                ("response_text", "Готовый итог уже есть: "),
+                ("delegation_notes", "Текущие заметки делегирования: "),
+            ],
         ),
         
         State(
@@ -63,5 +68,10 @@ class SupervisorAgent(AgentConfig):
 """,
             transitions=["END"],
             description="Агрегация результатов от агентов",
+            memory_injections=[
+                ("request_type", "Тип запроса: ", "Тип запроса не определен."),
+                ("response_text", "Итог от подчиненных агентов: ", "Готовый итог пока отсутствует."),
+                ("delegation_notes", "Контекст делегирования: "),
+            ],
         )
     ]
