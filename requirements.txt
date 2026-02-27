@@ -9,5 +9,11 @@ langchain-openai>=0.0.5
 # Agent framework
 langgraph>=0.0.20
 
+# Observability
+rich>=13.0
+
 # Utilities
 pyyaml>=6.0
+
+# Optional: MLflow (uncomment if needed)
+# mlflow>=2.10

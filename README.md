@@ -19,7 +19,7 @@
 │   ├── state.py              # State, Transition, Conditions
 │   ├── graph_builder.py      # AgentGraphBuilder
 │   ├── base_agent.py         # AgentConfig (базовый класс)
-│   └── debug.py              # Логирование
+│   └── logging_utils.py      # Логирование (LangChain callbacks + rich)
 │
 ├── agents/                    # 🧩 НАБОР АГЕНТОВ
 │   ├── test_agent/           # Простейший (1 состояние)
@@ -348,22 +348,20 @@ agent2 = MyAgent(llm, tools_dict, agent_id="agent_2")
 # Каждый агент имеет свой agent_id для изоляции
 ```
 
-### Логирование
+### Observability
 
-```python
-from agent_engine.debug import enable_logging, disable_logging
+Настраивается в `config.yaml`, управление только через конфиг (без переключателей в коде):
 
-# Включить логирование
-enable_logging()
-
-# Теперь видны все шаги:
-# [STATE] work -> summarize
-# [TOOL] calculator params={"expression": "2+2"}
-# [TOOL] memory params={"action": "save", "key": "result", "value": "4"}
-
-# Отключить логирование
-disable_logging()
+```yaml
+logging:
+  level: detailed  # off | simple | detailed
+  mlflow:
+    enabled: false
 ```
+
+- **off** — без логов
+- **simple** — state transitions, tool names, token totals, errors
+- **detailed** — полные messages с цветовой подсветкой, tool params/results, memory snapshots, context size
 
 ## 🔄 Workflow агента
 
@@ -416,7 +414,7 @@ result = audit_agent.invoke(["Проверь папку 99-41116"])
 2. **Явные ключевые слова**: Используйте четкие маркеры для переходов ("ГОТОВО", "ЗАДАЧА_РЕШЕНА")
 3. **Описания**: Добавляйте description к State и Transition для документации
 4. **Изоляция памяти**: Очищайте память через `reset_memory()` перед новой сессией
-5. **Логирование**: Включайте для отладки, отключайте для production
+5. **Логирование**: `config.yaml` → `logging.level`: `off` / `simple` / `detailed`
 6. **Роутеры в функциях**: Выносите сложные роутеры в отдельные функции
 
 ## 📝 Примечания

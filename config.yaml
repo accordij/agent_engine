@@ -20,16 +20,36 @@ backends:
     temperature: 0.3
     timeout: 120
 
-# Отладка
-debug:
-  log_prompts: true
-  log_sessions: true
-  log_dir: "logs"
-  log_llm_messages: true
-  log_tool_params: true
-  log_tool_results: true
-  log_state_events: true
+# Logging — логирование и наблюдаемость агента
+logging:
+  # off — без логов, simple — компактный вывод, detailed — полный (messages, params, memory)
+  level: detailed
+  # Сырые request/response LLM в логах (без обрезки, для глубокой отладки)
+  raw_io: true
 
-# Настройки агента
+
+  # Цвета для типов сообщений (rich-стили, см. https://rich.readthedocs.io/en/latest/appendix/colors.html)
+  colors:
+    system: "bright_blue"       # системные промпты
+    human: "cyan"               # сообщения пользователя
+    assistant: "green"          # ответы LLM (текст)
+    reasoning: "bright_green"   # размышления агента
+    tool: "yellow"              # вывод инструментов
+    tool_name: "bold yellow"    # имя инструмента
+    warning: "orange3"          # предупреждения
+    error: "bold red"           # ошибки
+    state: "bold magenta"       # переходы между состояниями
+    tokens: "dim cyan"          # статистика токенов
+    memory: "bright_magenta"    # снимки памяти
+    run: "bold white"           # границы запуска (start/end)
+    info: "dim white"           # служебная информация
+
+  # MLflow Tracking (опционально, требует pip install mlflow)
+  mlflow:
+    enabled: false              # true — включить авто-логирование в MLflow
+    tracking_uri: ""            # адрес MLflow сервера (пусто = локальный ./mlruns)
+    experiment: "agent-runs"    # имя эксперимента в MLflow
+
+# рекурсия графа агента (длина цепочки)
 agent:
   recursion_limit: 30

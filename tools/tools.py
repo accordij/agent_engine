@@ -1,7 +1,6 @@
 """Инструменты для агента."""
 from langchain.tools import tool
 from typing import Dict, Any
-from agent_engine.debug import log_prompts_enabled, log_event
 import os
 import re
 import json
@@ -10,52 +9,22 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 
-# Глобальное хранилище памяти для агента
 _memory_store: Dict[str, Any] = {}
 _memory_log: list[str] = []
-
-
-def _log_tool_call(tool_name: str, params: dict | None = None) -> None:
-    if log_prompts_enabled():
-        if params:
-            params_str = json.dumps(params, ensure_ascii=False)
-            print(f"[TOOL] {tool_name} params={params_str}", flush=True)
-        else:
-            print(f"[TOOL] {tool_name}", flush=True)
-    log_event(
-        "tool_call",
-        {
-            "tool": tool_name,
-            "params": params or {},
-        },
-    )
-
-
-def _log_tool_result(tool_name: str, result) -> None:
-    log_event(
-        "tool_result",
-        {
-            "tool": tool_name,
-            "result": result,
-        },
-    )
 
 
 @tool
 def calculator(expression: str) -> str:
     """Вычисляет математическое выражение, например: '2 + 3 * 4'"""
-    _log_tool_call("calculator", {"expression": expression})
     try:
         allowed_names = {"__builtins__": {}}
         result = eval(expression, allowed_names, {})
         output = str(result)
         memory_append.invoke(f"[calculator] {expression} = {output}")
-        _log_tool_result("calculator", output)
         return output
     except Exception as e:
         output = f"Ошибка вычисления: {e}"
         memory_append.invoke(f"[calculator] {expression} -> {output}")
-        _log_tool_result("calculator", output)
         return output
 
 
@@ -69,10 +38,8 @@ def ask_human(question: str) -> str:
     Returns:
         Ответ пользователя
     """
-    _log_tool_call("ask_human", {"question": question})
     print(f"\n🤔 Вопрос агента: {question}", flush=True)
     response = input("👤 Ваш ответ: ")
-    _log_tool_result("ask_human", response)
     return response
 
 
@@ -88,45 +55,29 @@ def memory(action: str, key: str = "", value: str = "") -> str:
     Returns:
         Результат операции
     """
-    _log_tool_call("memory", {"action": action, "key": key, "value": value})
     global _memory_store
     
     if action == "save":
         if not key:
-            output = "Ошибка: нужно указать ключ для сохранения"
-            _log_tool_result("memory", output)
-            return output
+            return "Ошибка: нужно указать ключ для сохранения"
         _memory_store[key] = value
-        output = f"✓ Сохранено в память: {key} = {value}"
-        _log_tool_result("memory", output)
-        return output
+        return f"✓ Сохранено в память: {key} = {value}"
     
     elif action == "get":
         if not key:
-            output = "Ошибка: нужно указать ключ для чтения"
-            _log_tool_result("memory", output)
-            return output
+            return "Ошибка: нужно указать ключ для чтения"
         if key in _memory_store:
-            output = f"Из памяти: {key} = {_memory_store[key]}"
-        else:
-            output = f"Ключ '{key}' не найден в памяти"
-        _log_tool_result("memory", output)
-        return output
+            return f"Из памяти: {key} = {_memory_store[key]}"
+        return f"Ключ '{key}' не найден в памяти"
     
     elif action == "list":
         if not _memory_store:
-            output = "Память пуста"
-            _log_tool_result("memory", output)
-            return output
+            return "Память пуста"
         keys = ", ".join(_memory_store.keys())
-        output = f"Ключи в памяти: {keys}"
-        _log_tool_result("memory", output)
-        return output
+        return f"Ключи в памяти: {keys}"
     
     else:
-        output = f"Неизвестное действие: {action}. Используйте 'save', 'get' или 'list'"
-        _log_tool_result("memory", output)
-        return output
+        return f"Неизвестное действие: {action}. Используйте 'save', 'get' или 'list'"
 
 
 def reset_memory() -> None:
@@ -139,34 +90,24 @@ def reset_memory() -> None:
 @tool
 def memory_append(text: str) -> str:
     """Добавляет строку в журнал памяти (append-only)."""
-    _log_tool_call("memory_append", {"text": text})
     global _memory_log
     if text is None:
-        output = "Ошибка: text не может быть пустым"
-        _log_tool_result("memory_append", output)
-        return output
+        return "Ошибка: text не может быть пустым"
     _memory_log.append(str(text))
-    output = f"✓ Добавлено в журнал: {text}"
-    _log_tool_result("memory_append", output)
-    return output
+    return f"✓ Добавлено в журнал: {text}"
 
 
 @tool
 def memory_read(limit: int = 0) -> str:
     """Возвращает журнал памяти. Если limit > 0, возвращает последние N строк."""
-    _log_tool_call("memory_read", {"limit": limit})
     global _memory_log
     if not _memory_log:
-        output = "Журнал памяти пуст"
-        _log_tool_result("memory_read", output)
-        return output
+        return "Журнал памяти пуст"
     if isinstance(limit, int) and limit > 0:
         lines = _memory_log[-limit:]
     else:
         lines = _memory_log
-    output = "\n".join(lines)
-    _log_tool_result("memory_read", output)
-    return output
+    return "\n".join(lines)
 
 
 @tool
@@ -179,13 +120,10 @@ def summarize(focus: str = "general") -> str:
     Returns:
         Краткое саммари
     """
-    _log_tool_call("summarize", {"focus": focus})
     global _memory_store
     
     if not _memory_store:
-        output = "📝 Саммари: Память пуста, нет данных для создания саммари."
-        _log_tool_result("summarize", output)
-        return output
+        return "📝 Саммари: Память пуста, нет данных для создания саммари."
     
     summary_parts = ["📝 Саммари выполненной работы:"]
     
@@ -200,21 +138,18 @@ def summarize(focus: str = "general") -> str:
         for key in _memory_store.keys():
             summary_parts.append(f"  - Обработано: {key}")
     
-    else:  # general
+    else:
         summary_parts.append("\n📊 Общая информация:")
         summary_parts.append(f"  - Всего записей: {len(_memory_store)}")
         for key, value in _memory_store.items():
             summary_parts.append(f"  - {key}: {value}")
     
-    output = "\n".join(summary_parts)
-    _log_tool_result("summarize", output)
-    return output
+    return "\n".join(summary_parts)
 
 
 @tool
 def think(thought: str) -> str:
     """Инструмент для внутренних размышлений агента.
-    Помогает агенту структурировать свои мысли перед принятием решений.
     
     Args:
         thought: Мысль или размышление агента
@@ -222,33 +157,23 @@ def think(thought: str) -> str:
     Returns:
         Подтверждение размышления
     """
-    _log_tool_call("think", {"thought": thought})
     print(f"\n💭 Размышление агента: {thought}", flush=True)
-    output = f"✓ Размышление зафиксировано: {thought}"
-    _log_tool_result("think", output)
-    return output
+    return f"✓ Размышление зафиксировано: {thought}"
 
 
 @tool
 def list_data_folders(data_root: str = "data") -> str:
     """Возвращает список папок в корневой папке data."""
-    _log_tool_call("list_data_folders", {"data_root": data_root})
     if not os.path.isdir(data_root):
-        output = f"Ошибка: папка '{data_root}' не найдена"
-        _log_tool_result("list_data_folders", output)
-        return output
+        return f"Ошибка: папка '{data_root}' не найдена"
     folders = [
         name for name in os.listdir(data_root)
         if os.path.isdir(os.path.join(data_root, name))
     ]
     if not folders:
-        output = "Папка data пуста"
-        _log_tool_result("list_data_folders", output)
-        return output
+        return "Папка data пуста"
     folders.sort()
-    output = "\n".join(folders)
-    _log_tool_result("list_data_folders", output)
-    return output
+    return "\n".join(folders)
 
 
 def _normalize_case_name(value: str) -> str:
@@ -283,24 +208,17 @@ def find_case_folder(case_input: str, data_root: str = "data") -> str:
     - match: путь к папке (если status="ok")
     - candidates: топ-5 кандидатов с оценками
     """
-    _log_tool_call("find_case_folder", {"case_input": case_input, "data_root": data_root})
     if not case_input:
-        output = json.dumps({"status": "needs_confirmation", "reason": "empty_input"}, ensure_ascii=False)
-        _log_tool_result("find_case_folder", output)
-        return output
+        return json.dumps({"status": "needs_confirmation", "reason": "empty_input"}, ensure_ascii=False)
     if not os.path.isdir(data_root):
-        output = json.dumps({"status": "error", "reason": "data_root_not_found"}, ensure_ascii=False)
-        _log_tool_result("find_case_folder", output)
-        return output
+        return json.dumps({"status": "error", "reason": "data_root_not_found"}, ensure_ascii=False)
 
     folders = [
         name for name in os.listdir(data_root)
         if os.path.isdir(os.path.join(data_root, name))
     ]
     if not folders:
-        output = json.dumps({"status": "error", "reason": "no_folders"}, ensure_ascii=False)
-        _log_tool_result("find_case_folder", output)
-        return output
+        return json.dumps({"status": "error", "reason": "no_folders"}, ensure_ascii=False)
 
     normalized_input = _normalize_case_name(case_input)
     substring_matches = []
@@ -315,22 +233,18 @@ def find_case_folder(case_input: str, data_root: str = "data") -> str:
         substring_matches.sort(key=lambda x: x["score"], reverse=True)
         if len(substring_matches) == 1:
             best = substring_matches[0]
-            output = json.dumps({
+            return json.dumps({
                 "status": "ok",
                 "match": os.path.join(data_root, best["folder"]),
                 "score": best["score"],
                 "match_mode": "substring",
                 "candidates": substring_matches
             }, ensure_ascii=False)
-            _log_tool_result("find_case_folder", output)
-            return output
-        output = json.dumps({
+        return json.dumps({
             "status": "needs_confirmation",
             "match_mode": "substring",
             "candidates": substring_matches[:5]
         }, ensure_ascii=False)
-        _log_tool_result("find_case_folder", output)
-        return output
 
     scored = []
     for folder in folders:
@@ -345,47 +259,34 @@ def find_case_folder(case_input: str, data_root: str = "data") -> str:
     confident = best["score"] >= 0.75 and (second is None or (best["score"] - second["score"]) >= 0.08)
 
     if confident:
-        output = json.dumps({
+        return json.dumps({
             "status": "ok",
             "match": os.path.join(data_root, best["folder"]),
             "score": best["score"],
             "candidates": top_candidates
         }, ensure_ascii=False)
-        _log_tool_result("find_case_folder", output)
-        return output
 
-    output = json.dumps({
+    return json.dumps({
         "status": "needs_confirmation",
         "candidates": top_candidates
     }, ensure_ascii=False)
-    _log_tool_result("find_case_folder", output)
-    return output
 
 
 @tool
 def list_case_files(case_folder: str) -> str:
     """Возвращает список файлов в папке проверки."""
-    _log_tool_call("list_case_files", {"case_folder": case_folder})
     if not case_folder:
-        output = "Ошибка: не указан путь к папке"
-        _log_tool_result("list_case_files", output)
-        return output
+        return "Ошибка: не указан путь к папке"
     if not os.path.isdir(case_folder):
-        output = f"Ошибка: папка '{case_folder}' не найдена"
-        _log_tool_result("list_case_files", output)
-        return output
+        return f"Ошибка: папка '{case_folder}' не найдена"
     files = [
         name for name in os.listdir(case_folder)
         if os.path.isfile(os.path.join(case_folder, name))
     ]
     if not files:
-        output = "В папке нет файлов"
-        _log_tool_result("list_case_files", output)
-        return output
+        return "В папке нет файлов"
     files.sort()
-    output = "\n".join(files)
-    _log_tool_result("list_case_files", output)
-    return output
+    return "\n".join(files)
 
 
 def _extract_docx_text_nodes(xml_content: str) -> list[str]:
@@ -402,24 +303,17 @@ def _extract_docx_text_nodes(xml_content: str) -> list[str]:
 @tool
 def read_docx_structure(docx_path: str) -> str:
     """Читает docx и возвращает названия реплик и таблиц (если найдены)."""
-    _log_tool_call("read_docx_structure", {"docx_path": docx_path})
     if not docx_path:
-        output = json.dumps({"status": "error", "reason": "empty_path"}, ensure_ascii=False)
-        _log_tool_result("read_docx_structure", output)
-        return output
+        return json.dumps({"status": "error", "reason": "empty_path"}, ensure_ascii=False)
     if not os.path.isfile(docx_path):
-        output = json.dumps({"status": "error", "reason": "file_not_found"}, ensure_ascii=False)
-        _log_tool_result("read_docx_structure", output)
-        return output
+        return json.dumps({"status": "error", "reason": "file_not_found"}, ensure_ascii=False)
 
     try:
         with zipfile.ZipFile(docx_path, "r") as archive:
             with archive.open("word/document.xml") as doc_xml:
                 xml_content = doc_xml.read().decode("utf-8", errors="ignore")
     except Exception as exc:
-        output = json.dumps({"status": "error", "reason": f"docx_read_failed: {exc}"}, ensure_ascii=False)
-        _log_tool_result("read_docx_structure", output)
-        return output
+        return json.dumps({"status": "error", "reason": f"docx_read_failed: {exc}"}, ensure_ascii=False)
 
     paragraphs = _extract_docx_text_nodes(xml_content)
     replica_titles = []
@@ -430,53 +324,36 @@ def read_docx_structure(docx_path: str) -> str:
         if re.search(r"\bтаблица\b", text, flags=re.IGNORECASE):
             table_titles.append(text)
 
-    output = json.dumps({
+    return json.dumps({
         "status": "ok",
         "replica_titles": replica_titles[:50],
         "table_titles": table_titles[:50],
         "total_paragraphs": len(paragraphs)
     }, ensure_ascii=False)
-    _log_tool_result("read_docx_structure", output)
-    return output
 
 
 @tool
 def read_sql_file(sql_path: str) -> str:
     """Читает SQL-файл."""
-    _log_tool_call("read_sql_file", {"sql_path": sql_path})
     if not sql_path:
-        output = "Ошибка: не указан путь к файлу"
-        _log_tool_result("read_sql_file", output)
-        return output
+        return "Ошибка: не указан путь к файлу"
     if not os.path.isfile(sql_path):
-        output = f"Ошибка: файл '{sql_path}' не найден"
-        _log_tool_result("read_sql_file", output)
-        return output
+        return f"Ошибка: файл '{sql_path}' не найден"
     with open(sql_path, "r", encoding="utf-8") as file:
-        output = file.read()
-    _log_tool_result("read_sql_file", output)
-    return output
+        return file.read()
 
 
 @tool
 def read_py_file(py_path: str) -> str:
     """Читает Python-файл."""
-    _log_tool_call("read_py_file", {"py_path": py_path})
     if not py_path:
-        output = "Ошибка: не указан путь к файлу"
-        _log_tool_result("read_py_file", output)
-        return output
+        return "Ошибка: не указан путь к файлу"
     if not os.path.isfile(py_path):
-        output = f"Ошибка: файл '{py_path}' не найден"
-        _log_tool_result("read_py_file", output)
-        return output
+        return f"Ошибка: файл '{py_path}' не найден"
     with open(py_path, "r", encoding="utf-8") as file:
-        output = file.read()
-    _log_tool_result("read_py_file", output)
-    return output
+        return file.read()
 
 
-# Экспорт списка инструментов (базовые)
 tools = [
     calculator,
     ask_human,
@@ -493,57 +370,29 @@ tools = [
     read_py_file
 ]
 
-# ============================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ============================================================
 
 def get_tools_dict(tools_list: list = None) -> dict:
-    """Преобразует список инструментов в словарь {имя: объект}.
-    
-    Args:
-        tools_list: Список инструментов (по умолчанию используется tools)
-        
-    Returns:
-        Словарь {имя_инструмента: объект_инструмента}
-    """
     if tools_list is None:
         tools_list = tools
     return {tool.name: tool for tool in tools_list}
 
 
-# ============================================================
-# РЕЕСТР АГЕНТОВ ДЛЯ МУЛЬТИАГЕНТНЫХ СИСТЕМ
-# ============================================================
+# ────────────────────────────────────────────────────────────
+# Реестр агентов для мультиагентных систем
+# ────────────────────────────────────────────────────────────
 
 _agents_registry: dict = {}
 
 
 def register_agent(name: str, agent) -> None:
-    """Регистрирует агента в глобальном реестре для вызова другими агентами.
-    
-    Args:
-        name: Уникальное имя агента
-        agent: Объект агента (должен иметь метод invoke)
-    """
     _agents_registry[name] = agent
-    if log_prompts_enabled():
-        print(f"[REGISTRY] Зарегистрирован агент: {name}")
 
 
 def get_registered_agent(name: str):
-    """Получает зарегистрированного агента по имени.
-    
-    Args:
-        name: Имя агента
-        
-    Returns:
-        Объект агента или None если не найден
-    """
     return _agents_registry.get(name)
 
 
 def list_registered_agents() -> list[str]:
-    """Возвращает список имен зарегистрированных агентов."""
     return list(_agents_registry.keys())
 
 
@@ -551,45 +400,31 @@ def list_registered_agents() -> list[str]:
 def call_agent(agent_name: str, query: str) -> str:
     """Вызывает другого зарегистрированного агента.
     
-    ВАЖНО: Агент должен быть предварительно зарегистрирован через register_agent()
-    
     Args:
         agent_name: Имя агента для вызова
         query: Запрос к агенту
         
     Returns:
         Результат работы агента
-        
-    Пример:
-        # Регистрация агента
-        register_agent("math_agent", math_agent_instance)
-        
-        # Вызов из другого агента
-        result = call_agent("math_agent", "Посчитай 2+2")
     """
-    _log_tool_call("call_agent", {"agent_name": agent_name, "query": query})
-    
+    from agent_engine.logging_utils import log_memory_snapshot, is_enabled
+
+    if is_enabled():
+        log_memory_snapshot(f"before_call({agent_name})", _memory_store, when="multiagent")
+
     agent = get_registered_agent(agent_name)
     if not agent:
         available = ", ".join(list_registered_agents()) or "нет"
-        output = f"Ошибка: агент '{agent_name}' не зарегистрирован. Доступны: {available}"
-        _log_tool_result("call_agent", output)
-        return output
+        return f"Ошибка: агент '{agent_name}' не зарегистрирован. Доступны: {available}"
     
     try:
         result = agent.invoke([query])
-        # Получаем последнее сообщение от агента
         last_message = result['messages'][-1].content
-        output = f"Результат от агента '{agent_name}':\n{last_message}"
-        _log_tool_result("call_agent", output)
-        return output
+        return f"Результат от агента '{agent_name}':\n{last_message}"
     except Exception as e:
-        output = f"Ошибка при вызове агента '{agent_name}': {e}"
-        _log_tool_result("call_agent", output)
-        return output
+        return f"Ошибка при вызове агента '{agent_name}': {e}"
 
 
-# Инструменты для мультиагентных систем (добавляются отдельно при необходимости)
 multiagent_tools = [
     call_agent
 ]

@@ -2,6 +2,7 @@
 from typing import Any, Dict
 from .graph_builder import AgentGraphBuilder
 from .state import State
+from .logging_utils import create_callbacks, log_run_start, log_run_end
 
 
 class AgentConfig:
@@ -46,49 +47,58 @@ class AgentConfig:
             )
     
     def build(self):
-        """Собирает и возвращает скомпилированный граф агента."""
         builder = AgentGraphBuilder(self.llm, self.tools_dict)
         builder.add_states(self.states)
         builder.set_entry(self.entry_point)
-        
         self._graph = builder.build()
         return self._graph
     
     @property
     def graph(self):
-        """Возвращает граф (собирает если ещё не собран)."""
         if self._graph is None:
             self.build()
         return self._graph
     
     def invoke(self, messages: list[str] | dict, config: dict | None = None) -> dict:
-        """Запускает агента с сообщениями."""
         if isinstance(messages, dict):
             state = messages
         else:
             state = {'messages': messages, 'memory': {}, 'summary': ''}
         
+        callbacks, handler = create_callbacks()
         default_config = {"recursion_limit": 100}
+        if callbacks:
+            default_config["callbacks"] = callbacks
         if config:
             default_config.update(config)
         
-        return self.graph.invoke(state, config=default_config)
+        log_run_start(self.agent_id)
+        try:
+            result = self.graph.invoke(state, config=default_config)
+        finally:
+            log_run_end(self.agent_id, handler)
+        return result
     
     def stream(self, messages: list[str] | dict, config: dict | None = None):
-        """Стримит выполнение агента."""
         if isinstance(messages, dict):
             state = messages
         else:
             state = {'messages': messages, 'memory': {}, 'summary': ''}
         
+        callbacks, handler = create_callbacks()
         default_config = {"recursion_limit": 100}
+        if callbacks:
+            default_config["callbacks"] = callbacks
         if config:
             default_config.update(config)
         
-        return self.graph.stream(state, config=default_config)
+        log_run_start(self.agent_id)
+        try:
+            yield from self.graph.stream(state, config=default_config)
+        finally:
+            log_run_end(self.agent_id, handler)
     
     def visualize(self) -> str:
-        """Возвращает текстовое описание графа агента."""
         builder = AgentGraphBuilder(self.llm, self.tools_dict)
         builder.add_states(self.states)
         builder.set_entry(self.entry_point)
