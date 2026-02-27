@@ -419,17 +419,155 @@ class AgentGraphBuilder:
                     return AIMessage(content=msg.content)
         return None
 
-    def visualize(self) -> str:
-        lines = ["Граф агента:", ""]
+    def _classify_tool_origin(self, tool_name: str) -> str:
+        """Определяет происхождение инструмента для preflight-визуализации."""
+        tool_obj = self.all_tools.get(tool_name)
+        if tool_obj is None:
+            return "missing"
+        if tool_name == "transition":
+            return "system"
 
+        module_name = getattr(tool_obj, "__module__", "") or ""
+        raw_func = getattr(tool_obj, "func", None)
+        if raw_func is not None:
+            module_name = getattr(raw_func, "__module__", "") or module_name
+
+        if module_name.startswith("src.agents."):
+            return "local"
+        return "shared"
+
+    def _collect_preflight_issues(self) -> dict[str, list[str]]:
+        states = self.states
+        state_names = [s.name for s in states]
+        unique_names = set(state_names)
+
+        duplicate_state_names = sorted({name for name in state_names if state_names.count(name) > 1})
+
+        invalid_transitions: list[str] = []
+        adjacency: dict[str, list[str]] = {s.name: [] for s in states}
+        for s in states:
+            for target in s.transitions:
+                if target == "END":
+                    continue
+                if target not in unique_names:
+                    invalid_transitions.append(f"{s.name} -> {target}")
+                    continue
+                adjacency[s.name].append(target)
+
+        missing_tools: list[str] = []
+        for s in states:
+            missing = [tool_name for tool_name in s.tools if tool_name not in self.all_tools]
+            if missing:
+                missing_tools.append(f"{s.name}: {', '.join(missing)}")
+
+        entry_point_issues: list[str] = []
+        if not self.entry_point:
+            entry_point_issues.append("entry_point не задан")
+        elif self.entry_point not in unique_names:
+            entry_point_issues.append(f"entry_point '{self.entry_point}' отсутствует в states")
+
+        unreachable_states: list[str] = []
+        if self.entry_point and self.entry_point in unique_names:
+            visited: set[str] = set()
+            stack = [self.entry_point]
+            while stack:
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                for nxt in adjacency.get(current, []):
+                    if nxt not in visited:
+                        stack.append(nxt)
+            unreachable_states = sorted(unique_names - visited)
+
+        return {
+            "entry_point_issues": entry_point_issues,
+            "duplicate_state_names": duplicate_state_names,
+            "invalid_transitions": sorted(invalid_transitions),
+            "missing_tools": missing_tools,
+            "unreachable_states": unreachable_states,
+        }
+
+    def visualize(self) -> str:
+        from src.tools.tools import _memory_store
+
+        lines = ["Граф агента (preflight):", ""]
+
+        unique_tools = sorted({tool_name for s in self.states for tool_name in s.tools})
+        memory_keys = sorted(_memory_store.keys())
+        issues = self._collect_preflight_issues()
+
+        lines.append("Сводка:")
+        lines.append(f"  - Entry point: {self.entry_point or 'не задан'}")
+        lines.append(f"  - Состояний: {len(self.states)}")
+        lines.append(f"  - Уникальных тулов: {len(unique_tools)}")
+        lines.append(f"  - Ключей в памяти сейчас: {len(memory_keys)}")
+        if memory_keys:
+            lines.append(f"  - Память: {', '.join(memory_keys)}")
+
+        lines.append("")
         lines.append("Состояния:")
         for s in self.states:
             entry_marker = " (entry)" if s.name == self.entry_point else ""
             lines.append(f"  - {s.name}{entry_marker}")
-            lines.append(f"    Инструменты: {', '.join(s.tools)}")
-            if s.transitions:
-                lines.append(f"    Переходы: {', '.join(s.transitions)}")
             if s.description:
                 lines.append(f"    Описание: {s.description}")
+
+            transitions = ", ".join(s.transitions) if s.transitions else "нет"
+            lines.append(f"    Переходы: {transitions}")
+
+            if s.tools:
+                grouped_tools: dict[str, list[str]] = {
+                    "shared": [],
+                    "local": [],
+                    "missing": [],
+                    "other": [],
+                }
+                for tool_name in s.tools:
+                    origin = self._classify_tool_origin(tool_name)
+                    if origin in grouped_tools:
+                        grouped_tools[origin].append(tool_name)
+                    else:
+                        grouped_tools["other"].append(f"{tool_name} [{origin}]")
+
+                if grouped_tools["shared"]:
+                    lines.append(f"    Инструменты (shared): {', '.join(grouped_tools['shared'])}")
+                if grouped_tools["local"]:
+                    lines.append(f"    Инструменты (local): {', '.join(grouped_tools['local'])}")
+                if grouped_tools["missing"]:
+                    lines.append(f"    Инструменты (missing): {', '.join(grouped_tools['missing'])}")
+                if grouped_tools["other"]:
+                    lines.append(f"    Инструменты (other): {', '.join(grouped_tools['other'])}")
+            else:
+                lines.append("    Инструменты: нет")
+
+            if s.memory_injections:
+                keys = []
+                for raw in s.memory_injections:
+                    normalized = self._normalize_memory_injection(raw, s.name)
+                    if normalized:
+                        keys.append(normalized["key"])
+                lines.append(f"    Memory injections: {', '.join(keys) if keys else 'нет'}")
+            else:
+                lines.append("    Memory injections: нет")
+
+        lines.append("")
+        lines.append("Проверки конфигурации:")
+        if not any(issues.values()):
+            lines.append("  ✓ Ошибок конфигурации не найдено")
+        else:
+            if issues["entry_point_issues"]:
+                lines.append(f"  ! Entry point: {'; '.join(issues['entry_point_issues'])}")
+            if issues["duplicate_state_names"]:
+                lines.append(f"  ! Дубли состояний: {', '.join(issues['duplicate_state_names'])}")
+            if issues["invalid_transitions"]:
+                lines.append(f"  ! Невалидные переходы: {', '.join(issues['invalid_transitions'])}")
+            if issues["missing_tools"]:
+                lines.append(f"  ! Отсутствующие тулы: {'; '.join(issues['missing_tools'])}")
+            if issues["unreachable_states"]:
+                lines.append(
+                    f"  ! Недостижимые состояния (в них агент никогда не войдет): "
+                    f"{', '.join(issues['unreachable_states'])}"
+                )
 
         return "\n".join(lines)
