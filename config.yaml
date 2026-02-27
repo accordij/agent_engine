@@ -25,7 +25,7 @@ logging:
   # off — без логов, simple — компактный вывод, detailed — полный (messages, params, memory)
   level: detailed
   # Сырые request/response LLM в логах (без обрезки, для глубокой отладки)
-  raw_io: true
+  raw_io: false
 
 
   # Цвета для типов сообщений (rich-стили, см. https://rich.readthedocs.io/en/latest/appendix/colors.html)
