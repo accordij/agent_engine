@@ -79,6 +79,8 @@ tools_dict = get_tools_dict(agent_name="my_agent")
 - `backends.gigachat` / `backends.lmstudio`: модель, температура, timeout, URL/env;
 - `logging.level`: `off | simple | detailed`;
 - `logging.raw_io`: логировать сырой request/response;
+- `logging.aggregated`: при `level=detailed` — компактный вывод: `REQ N | msgs=<count> in=<tokens> out=<tokens>` и только дельта контекста (новые сообщения с момента первого отличия от предыдущего запроса). Без повторов `[SYS][USER][tool1]...[answer]` в каждом вызове;
+- `logging.filters`: включение/отключение `system/human/tools/assistant/state/memory` отдельно для `global` и `jupyter`;
 - `agent.recursion_limit`: лимит шагов графа (используйте при вызове агента через `config`).
 
 LLM-клиент создается через `src/connections/clients.py`:

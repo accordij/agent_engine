@@ -26,6 +26,26 @@ logging:
   level: detailed
   # Сырые request/response LLM в логах (без обрезки, для глубокой отладки)
   raw_io: false
+  # Агрегированный режим для detailed: REQ N | msgs=... in=... out=... + только дельта контекста
+  aggregated: true
+  # Фильтрация сообщений по ролям:
+  # global — влияет на общее логирование (консоль и файл),
+  # jupyter — дополнительная фильтрация только для вывода в ноутбуке.
+  filters:
+    global:
+      system: true
+      human: true
+      tools: true
+      assistant: true
+      state: true
+      memory: true
+    jupyter:
+      system: false
+      human: true
+      tools: true
+      assistant: true
+      state: true
+      memory: true
 
 
   # Цвета для типов сообщений (rich-стили, см. https://rich.readthedocs.io/en/latest/appendix/colors.html)
