@@ -1,7 +1,7 @@
 """Общие инструменты и автозагрузка tool-модулей."""
 from importlib import import_module
 from langchain.tools import tool
-from typing import Dict, Any
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 import pkgutil
 
@@ -41,40 +41,73 @@ def ask_human(question: str) -> str:
 
 
 @tool
-def memory(action: str, key: str = "", value: str = "") -> str:
+def memory(
+    action: str,
+    key: str = "",
+    value: str = "",
+    keys: Optional[List[str]] = None,
+    values: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Сохраняет или читает заметки из памяти агента.
+
+    Пакетно: передай keys и values одинаковой длины (save) или только keys (get) —
+    один вызов инструмента вместо нескольких.
 
     Args:
         action: "save" для сохранения, "get" для чтения, "list" для списка всех ключей
-        key: Ключ для сохранения/чтения
-        value: Значение для сохранения (только для action="save")
+        key: Один ключ (совместимость со старым вызовом)
+        value: Одно значение для save (вместе с key)
+        keys: Несколько ключей сразу
+        values: Значения для save; длина должна совпадать с keys
 
     Returns:
-        Результат операции
+        Словарь с полями ok, saved/entries/keys или error
     """
     global _memory_store
 
+    def _resolve_key_list() -> List[str]:
+        if keys:
+            return list(keys)
+        if key:
+            return [key]
+        return []
+
     if action == "save":
-        if not key:
-            return "Ошибка: нужно указать ключ для сохранения"
+        ks = _resolve_key_list()
+        if not ks:
+            return {"ok": False, "error": "Нужен key или непустой keys для сохранения"}
+
+        if keys and len(keys) > 0:
+            if values is None or len(values) != len(keys):
+                return {
+                    "ok": False,
+                    "error": "Для save с keys нужен values той же длины, что и keys",
+                }
+            for k, v in zip(keys, values):
+                _memory_store[k] = v
+            return {"ok": True, "saved": dict(zip(keys, values))}
+
         _memory_store[key] = value
-        return f"✓ Сохранено в память: {key} = {value}"
+        return {"ok": True, "saved": {key: value}}
 
-    elif action == "get":
-        if not key:
-            return "Ошибка: нужно указать ключ для чтения"
-        if key in _memory_store:
-            return f"Из памяти: {key} = {_memory_store[key]}"
-        return f"Ключ '{key}' не найден в памяти"
+    if action == "get":
+        ks = _resolve_key_list()
+        if not ks:
+            return {"ok": False, "error": "Нужен key или непустой keys для чтения"}
+        entries = {k: _memory_store[k] if k in _memory_store else None for k in ks}
+        return {"ok": True, "entries": entries}
 
-    elif action == "list":
-        if not _memory_store:
-            return "Память пуста"
-        keys = ", ".join(_memory_store.keys())
-        return f"Ключи в памяти: {keys}"
+    if action == "list":
+        return {
+            "ok": True,
+            "keys": list(_memory_store.keys()),
+            "empty": len(_memory_store) == 0,
+        }
 
-    else:
-        return f"Неизвестное действие: {action}. Используйте 'save', 'get' или 'list'"
+    return {
+        "ok": False,
+        "error": f"Неизвестное действие: {action}. Используйте 'save', 'get' или 'list'",
+    }
 
 
 def reset_memory() -> None:
