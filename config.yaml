@@ -24,6 +24,12 @@ backends:
 logging:
   # off — без логов, simple — компактный вывод, detailed — полный (messages, params, memory)
   level: detailed
+  # Рендерер консольного вывода:
+  # off  — не печатать в консоль (файл логов сохраняется),
+  # auto — автоматически: ansi для Jupyter/VSCode notebook, rich для терминала,
+  # rich — принудительно Rich renderer,
+  # ansi — принудительно ANSI renderer.
+  renderer: auto
   # Сырые request/response LLM в логах (без обрезки, для глубокой отладки)
   raw_io: false
   # Агрегированный режим для detailed: REQ N | msgs=... in=... out=... + только дельта контекста
@@ -40,7 +46,7 @@ logging:
       state: true
       memory: true
     jupyter:
-      system: false
+      system: true
       human: true
       tools: true
       assistant: true
@@ -49,20 +55,22 @@ logging:
 
 
   # Цвета для типов сообщений (rich-стили, см. https://rich.readthedocs.io/en/latest/appendix/colors.html)
+  # Default-палитра ниже оптимизирована под dark theme (мягкая колеровка, без агрессивных тонов).
+  # Для light theme можно заменить colors на более контрастный вариант (пример в README).
   colors:
-    system: "bright_blue"       # системные промпты
-    human: "cyan"               # сообщения пользователя
-    assistant: "green"          # ответы LLM (текст)
-    reasoning: "bright_green"   # размышления агента
-    tool: "yellow"              # вывод инструментов
-    tool_name: "bold yellow"    # имя инструмента
-    warning: "orange3"          # предупреждения
-    error: "bold red"           # ошибки
-    state: "bold magenta"       # переходы между состояниями
-    tokens: "dim cyan"          # статистика токенов
+    system: "#8fb3ff"           # системные промпты
+    human: "green"            # сообщения пользователя
+    assistant: "#a6e3a1"        # ответы LLM (текст)
+    reasoning: "bright_green"        # размышления агента
+    tool: "#f9c97b"             # вывод инструментов
+    tool_name: "bold yellow"   # имя инструмента
+    warning: "bold #f5c2a8"     # предупреждения
+    error: "bold #f38ba8"       # ошибки
+    state: "bold #cba6f7"       # переходы между состояниями
+    tokens: "#89dceb"           # статистика токенов
     memory: "bright_magenta"    # снимки памяти
-    run: "bold white"           # границы запуска (start/end)
-    info: "dim white"           # служебная информация
+    run: "bold magenta"         # границы запуска (start/end)
+    info: "#d8dee9"             # служебная информация
 
   # MLflow Tracking (опционально, требует pip install mlflow)
   mlflow:

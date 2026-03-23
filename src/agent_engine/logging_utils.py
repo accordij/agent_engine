@@ -1,12 +1,13 @@
 """Утилиты логирования агента: callbacks, rich-форматирование, метрики."""
 from __future__ import annotations
 
+import os
 import re
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TextIO
+from typing import Any, Callable, Dict, List, Optional, Protocol, TextIO
 from uuid import UUID
 
 import yaml
@@ -17,27 +18,60 @@ from rich.theme import Theme
 
 
 _DEFAULT_COLORS = {
-    "system": "bright_blue",
-    "human": "cyan",
-    "assistant": "green",
-    "reasoning": "bright_green",
-    "tool": "yellow",
-    "tool.name": "bold yellow",
-    "warning": "orange3",
-    "error": "bold red",
-    "state": "bold magenta",
-    "info": "dim white",
-    "tokens": "dim cyan",
-    "memory": "bright_magenta",
-    "run": "bold white",
+    "system": "#8fb3ff",
+    "human": "#9ad4ff",
+    "assistant": "#a6e3a1",
+    "reasoning": "#b4f0b6",
+    "tool": "#f9c97b",
+    "tool.name": "bold #f6c177",
+    "warning": "bold #f5c2a8",
+    "error": "bold #f38ba8",
+    "state": "bold #cba6f7",
+    "info": "#d8dee9",
+    "tokens": "#89dceb",
+    "memory": "#f5bde6",
+    "run": "bold #e5e9f0",
 }
 
-_console: Console | None = None
+_renderer: "Renderer | None" = None
 _config: dict = {}
 _log_file: TextIO | None = None
 _log_path: Path | None = None
 _ROLE_FILTER_KEYS = ("system", "human", "tools", "assistant", "state", "memory")
 _DEFAULT_ROLE_FILTERS = {k: True for k in _ROLE_FILTER_KEYS}
+_VALID_RENDERERS = {"off", "auto", "rich", "ansi"}
+
+
+class Renderer(Protocol):
+    def print(self, text: str) -> None:
+        ...
+
+
+class RichRenderer:
+    def __init__(self, colors_cfg: dict | None = None):
+        self._console = Console(
+            theme=_build_theme(colors_cfg),
+            soft_wrap=True,
+            highlight=False,
+            force_jupyter=False,
+        )
+
+    def print(self, text: str) -> None:
+        self._console.print(text)
+
+
+class AnsiRenderer:
+    def __init__(self, colors_cfg: dict | None = None):
+        self._console = Console(
+            theme=_build_theme(colors_cfg),
+            force_terminal=True,
+            force_jupyter=False,
+            soft_wrap=True,
+            highlight=False,
+        )
+
+    def print(self, text: str) -> None:
+        self._console.print(text)
 
 
 def _build_theme(colors_cfg: dict | None = None) -> Theme:
@@ -51,12 +85,60 @@ def _build_theme(colors_cfg: dict | None = None) -> Theme:
     return Theme(merged)
 
 
-def _get_console() -> Console:
-    global _console
-    if _console is None:
-        colors_cfg = _config.get("colors", None)
-        _console = Console(theme=_build_theme(colors_cfg))
-    return _console
+def _is_vscode() -> bool:
+    term_program = (os.getenv("TERM_PROGRAM") or "").lower()
+    return any(
+        (
+            os.getenv("VSCODE_PID"),
+            os.getenv("VSCODE_CWD"),
+            os.getenv("VSCODE_VERBOSE_LOGGING"),
+            term_program == "vscode",
+        )
+    )
+
+
+def _is_vscode_notebook() -> bool:
+    if not _is_jupyter():
+        return False
+    if _is_vscode():
+        return True
+    term_program = (os.getenv("TERM_PROGRAM") or "").lower()
+    return bool(
+        os.getenv("VSCODE_PID")
+        or os.getenv("VSCODE_CWD")
+        or os.getenv("VSCODE_VERBOSE_LOGGING")
+        or term_program == "vscode"
+    )
+
+
+def _resolve_renderer_mode() -> str:
+    configured = str(_config.get("renderer", "auto")).strip().lower()
+    if configured not in _VALID_RENDERERS:
+        configured = "auto"
+    if configured != "auto":
+        return configured
+    if _is_jupyter() or _is_vscode_notebook():
+        return "ansi"
+    return "rich"
+
+
+def _get_renderer() -> Renderer | None:
+    global _renderer
+    if _renderer is not None:
+        return _renderer
+
+    mode = _resolve_renderer_mode()
+    colors_cfg = _config.get("colors", None)
+
+    if mode == "off":
+        _renderer = None
+    elif mode == "ansi":
+        _renderer = AnsiRenderer(colors_cfg)
+    elif mode == "rich":
+        _renderer = RichRenderer(colors_cfg)
+    else:
+        _renderer = RichRenderer(colors_cfg)
+    return _renderer
 
 
 def _strip_rich_markup(text: str) -> str:
@@ -153,7 +235,10 @@ def _emit(text: str, role: str | None = None) -> None:
         return
     if _is_jupyter() and not _is_role_enabled(role, "jupyter"):
         return
-    _get_console().print(text)
+    renderer = _get_renderer()
+    if renderer is None:
+        return
+    renderer.print(text)
 
 
 def load_logging_config(config_path: str = "config.yaml") -> dict:
@@ -165,6 +250,8 @@ def load_logging_config(config_path: str = "config.yaml") -> dict:
         # Prefer nested logging.raw_io; keep backward compatibility with legacy top-level key.
         logging_cfg["raw_io_enabled"] = bool(logging_cfg.get("raw_io", full.get("logging_raw_io", False)))
         logging_cfg["aggregated"] = bool(logging_cfg.get("aggregated", False))
+        renderer = str(logging_cfg.get("renderer", "auto")).strip().lower()
+        logging_cfg["renderer"] = renderer if renderer in _VALID_RENDERERS else "auto"
         filters_cfg = logging_cfg.get("filters", {}) or {}
         global_filters = _merged_role_filters(filters_cfg.get("global", {}))
         jupyter_filters = _merged_role_filters(filters_cfg.get("jupyter", {}))
@@ -250,13 +337,21 @@ class AgentCallbackHandler(BaseCallbackHandler):
             _emit(f"  [tokens]LLM call | {msg_count} msgs[/]")
 
     def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        if not is_enabled():
-            return
         self.llm_calls += 1
         inp, out, total = _extract_token_usage(response)
         self.total_input_tokens += inp
         self.total_output_tokens += out
         self.total_tokens += total
+        # Отправить AI-сообщение в UI (только с текстовым содержимым)
+        if response.generations:
+            for gen_list in response.generations:
+                for gen in gen_list:
+                    msg = getattr(gen, "message", None)
+                    if msg and getattr(msg, "content", None) and str(msg.content).strip():
+                        _emit_ui_event({"type": "ai_message", "content": str(msg.content)})
+        _emit_ui_event({"type": "stats", "data": self.get_summary()})
+        if not is_enabled():
+            return
         if is_detailed() and is_aggregated_enabled():
             req_id = self._current_request_id or self.llm_calls
             _emit(f"  [tokens]REQ {req_id} | msgs={self._pending_message_count} in={inp} out={out}[/]")
@@ -282,6 +377,7 @@ class AgentCallbackHandler(BaseCallbackHandler):
                 _emit_raw_lines("RAW_RESPONSE:", response)
 
     def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+        _emit_ui_event({"type": "llm_error", "error": str(error)})
         if not is_enabled():
             return
         self._pending_context_delta = []
@@ -299,21 +395,24 @@ class AgentCallbackHandler(BaseCallbackHandler):
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
-        if not is_enabled():
-            return
         self.tool_calls += 1
         name = serialized.get("name", "unknown")
+        _emit_ui_event({"type": "tool_start", "name": name, "params": input_str})
+        if not is_enabled():
+            return
         if is_detailed():
             _emit(f"  [tool.name]TOOL {name}[/] [tool]params={input_str}[/]", role="tools")
         else:
             _emit(f"  [tool.name]TOOL[/] {name}", role="tools")
 
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
+        _emit_ui_event({"type": "tool_end", "output": str(output)[:300]})
         if not is_detailed():
             return
         _emit(f"  [tool]  -> {str(output)}[/]", role="tools")
 
     def on_tool_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+        _emit_ui_event({"type": "tool_error", "error": str(error)})
         if not is_enabled():
             return
         _emit(f"  [error]TOOL ERROR: {error}[/]", role="tools")
@@ -328,8 +427,33 @@ class AgentCallbackHandler(BaseCallbackHandler):
         }
 
 
+def _coerce_token_value(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _read_usage_field(usage: Any, *field_names: str) -> int:
+    if usage is None:
+        return 0
+    for field_name in field_names:
+        if isinstance(usage, dict):
+            raw = usage.get(field_name)
+        else:
+            raw = getattr(usage, field_name, None)
+        value = _coerce_token_value(raw)
+        if value:
+            return value
+    return 0
+
+
 def _extract_token_usage(response: Any) -> tuple[int, int, int]:
-    usage: dict = {}
+    usage: Any = {}
     if hasattr(response, "llm_output") and response.llm_output:
         usage = response.llm_output.get("token_usage", {})
     if not usage and hasattr(response, "generations"):
@@ -338,14 +462,17 @@ def _extract_token_usage(response: Any) -> tuple[int, int, int]:
                 msg = getattr(gen, "message", None)
                 if msg and hasattr(msg, "usage_metadata") and msg.usage_metadata:
                     um = msg.usage_metadata
-                    return (um.get("input_tokens", 0), um.get("output_tokens", 0), um.get("total_tokens", 0))
+                    inp = _read_usage_field(um, "input_tokens", "prompt_tokens")
+                    out = _read_usage_field(um, "output_tokens", "completion_tokens")
+                    total = _read_usage_field(um, "total_tokens") or (inp + out)
+                    return inp, out, total
                 info = getattr(gen, "generation_info", None) or {}
                 if "token_usage" in info:
                     usage = info["token_usage"]
                     break
-    inp = usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0)
-    out = usage.get("completion_tokens", 0) or usage.get("output_tokens", 0)
-    total = usage.get("total_tokens", 0) or (inp + out)
+    inp = _read_usage_field(usage, "prompt_tokens", "input_tokens")
+    out = _read_usage_field(usage, "completion_tokens", "output_tokens")
+    total = _read_usage_field(usage, "total_tokens") or (inp + out)
     return inp, out, total
 
 
@@ -390,14 +517,38 @@ def _print_message(msg: Any) -> None:
 _current_run_id: str | None = None
 _run_start_time: float = 0
 
+# UI event emitter hook — устанавливается AgentBridge при работе в Streamlit
+_ui_event_emitter: Callable[[dict], None] | None = None
+
+
+def set_ui_event_emitter(fn: Callable[[dict], None]) -> None:
+    """Установить UI event emitter (вызывается из AgentBridge)."""
+    global _ui_event_emitter
+    _ui_event_emitter = fn
+
+
+def clear_ui_event_emitter() -> None:
+    """Очистить UI event emitter."""
+    global _ui_event_emitter
+    _ui_event_emitter = None
+
+
+def _emit_ui_event(event: dict) -> None:
+    if _ui_event_emitter is not None:
+        try:
+            _ui_event_emitter(event)
+        except Exception:
+            pass
+
 
 def log_run_start(agent_name: str) -> str | None:
     global _current_run_id, _run_start_time
-    if not is_enabled():
-        return None
     _current_run_id = uuid.uuid4().hex[:8]
     _run_start_time = time.time()
-    _emit(f"\n[run]{'=' * 60}[/]")
+    _emit_ui_event({"type": "run_start", "agent": agent_name, "run_id": _current_run_id})
+    if not is_enabled():
+        return _current_run_id
+    _emit(f"[run]{'=' * 60}[/]")
     _emit(f"[run]RUN {_current_run_id} | {agent_name} | started[/]")
     _emit(f"[run]{'=' * 60}[/]")
     return _current_run_id
@@ -405,24 +556,28 @@ def log_run_start(agent_name: str) -> str | None:
 
 def log_run_end(agent_name: str, handler: AgentCallbackHandler | None = None):
     global _current_run_id
-    if not is_enabled():
-        return
     elapsed = time.time() - _run_start_time
-    _emit(f"\n[run]{'=' * 60}[/]")
+    stats = handler.get_summary() if handler else {}
+    _emit_ui_event({"type": "run_end", "agent": agent_name, "elapsed": elapsed, "stats": stats})
+    if not is_enabled():
+        _current_run_id = None
+        return
+    _emit(f"[run]{'=' * 60}[/]")
     parts = [f"RUN {_current_run_id} | {agent_name} | {elapsed:.1f}s"]
     if handler:
         s = handler.get_summary()
         parts.append(f"| {s['total_tokens']} tokens ({s['input_tokens']} in / {s['output_tokens']} out)")
         parts.append(f"| {s['llm_calls']} LLM calls, {s['tool_calls']} tool calls")
     _emit(f"[run]{' '.join(parts)}[/]")
-    _emit(f"[run]{'=' * 60}[/]\n")
+    _emit(f"[run]{'=' * 60}[/]")
     _current_run_id = None
 
 
 def log_state_transition(from_state: str, to_state: str):
+    _emit_ui_event({"type": "state_transition", "from": from_state, "to": to_state})
     if not is_enabled():
         return
-    _emit(f"\n[state]STATE {from_state} -> {to_state}[/]", role="state")
+    _emit(f"[state]STATE {from_state} -> {to_state}[/]", role="state")
 
 
 def log_memory_snapshot(state_name: str, memory_store: dict, when: str = "exit"):
@@ -441,6 +596,7 @@ def log_memory_snapshot(state_name: str, memory_store: dict, when: str = "exit")
 
 
 def log_warning(message: str):
+    _emit_ui_event({"type": "warning", "message": message})
     if not is_enabled():
         return
     _emit(f"  [warning]WARN: {message}[/]")
@@ -453,9 +609,9 @@ def log_reentry(state_name: str):
 
 
 def init_logging(config_path: str = "config.yaml") -> None:
-    global _console
+    global _renderer
     cfg = load_logging_config(config_path)
-    _console = None
+    _renderer = None
     if not is_enabled():
         _close_log_file()
         return
@@ -486,6 +642,7 @@ def create_callbacks() -> tuple[list, AgentCallbackHandler | None]:
 
 __all__ = [
     "AgentCallbackHandler",
+    "clear_ui_event_emitter",
     "create_callbacks",
     "get_level",
     "init_logging",
@@ -498,4 +655,5 @@ __all__ = [
     "log_run_start",
     "log_state_transition",
     "log_warning",
+    "set_ui_event_emitter",
 ]
