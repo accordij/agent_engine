@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, TextIO
+from typing import Any, Callable, Dict, List, Optional, Protocol
 from uuid import UUID
 
 import yaml
@@ -35,7 +35,6 @@ _DEFAULT_COLORS = {
 
 _renderer: "Renderer | None" = None
 _config: dict = {}
-_log_file: TextIO | None = None
 _log_path: Path | None = None
 _ROLE_FILTER_KEYS = ("system", "human", "tools", "assistant", "state", "memory")
 _DEFAULT_ROLE_FILTERS = {k: True for k in _ROLE_FILTER_KEYS}
@@ -156,32 +155,34 @@ def _strip_rich_markup(text: str) -> str:
 
 
 def _close_log_file() -> None:
-    global _log_file, _log_path
-    if _log_file:
-        _log_file.close()
-    _log_file = None
+    global _log_path
     _log_path = None
 
 
 def _init_log_file() -> None:
-    global _log_file, _log_path
+    global _log_path
     _close_log_file()
     logs_dir = Path(_config.get("logs_dir", "logs"))
     logs_dir.mkdir(parents=True, exist_ok=True)
     file_name = _config.get("file_name") or f"agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     _log_path = logs_dir / file_name
-    _log_file = _log_path.open("a", encoding="utf-8")
+    # Создаём файл и сразу закрываем — дальше пишем open/append/close на строку,
+    # чтобы не держать блокировку между вызовами агента.
+    with _log_path.open("a", encoding="utf-8"):
+        pass
 
 
 def _write_log_line(text: str) -> None:
-    if not _log_file:
+    if not _log_path:
         return
     plain = _strip_rich_markup(text).strip()
     if not plain:
         return
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _log_file.write(f"{timestamp} {plain}\n")
-    _log_file.flush()
+    line = f"{timestamp} {plain}\n"
+    with _log_path.open("a", encoding="utf-8") as f:
+        f.write(line)
+        f.flush()
 
 
 def _is_jupyter() -> bool:
