@@ -17,11 +17,23 @@ def calculator(expression: str) -> str:
         allowed_names = {"__builtins__": {}}
         result = eval(expression, allowed_names, {})
         output = str(result)
-        memory_append.invoke(f"[calculator] {expression} = {output}")
+        memory.invoke(
+            {
+                "action": "save",
+                "key": "calculator_last",
+                "value": f"[calculator] {expression} = {output}",
+            }
+        )
         return output
     except Exception as e:
         output = f"Ошибка вычисления: {e}"
-        memory_append.invoke(f"[calculator] {expression} -> {output}")
+        memory.invoke(
+            {
+                "action": "save",
+                "key": "calculator_last",
+                "value": f"[calculator] {expression} -> {output}",
+            }
+        )
         return output
 
 
