@@ -1,13 +1,27 @@
 """Общие инструменты и автозагрузка tool-модулей."""
 from importlib import import_module
 from langchain.tools import tool
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 import pkgutil
 
 
 _memory_store: Dict[str, Any] = {}
 _memory_log: list[str] = []
+
+_human_input_handler: Callable[[str], str] | None = None
+
+
+def set_human_input_handler(fn: Callable[[str], str]) -> None:
+    """Установить обработчик ввода пользователя (вызывается из AgentBridge)."""
+    global _human_input_handler
+    _human_input_handler = fn
+
+
+def clear_human_input_handler() -> None:
+    """Сбросить обработчик ввода пользователя."""
+    global _human_input_handler
+    _human_input_handler = None
 
 
 @tool
@@ -48,6 +62,8 @@ def ask_human(question: str) -> str:
         Ответ пользователя
     """
     print(f"\n🤔 Вопрос агента: {question}", flush=True)
+    if _human_input_handler is not None:
+        return _human_input_handler(question)
     response = input("👤 Ваш ответ: ")
     return response
 

@@ -17,3 +17,6 @@ pyyaml>=6.0
 
 # Optional: MLflow (uncomment if needed)
 # mlflow>=2.10
+
+# UI (опционально — только для streamlit_ui.py)
+streamlit>=1.35
