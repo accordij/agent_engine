@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import ctypes
 import threading
 from typing import Any
 
@@ -103,7 +104,7 @@ class AgentBridge:
         try:
             agent = build_agent(agent_name, llm)
             agent.invoke([start_message], config={"recursion_limit": recursion_limit})
-        except StopAgentException:
+        except (StopAgentException, KeyboardInterrupt):
             self._handle_event({"type": "stopped", "message": "Агент остановлен пользователем"})
         except Exception as exc:
             self._error = str(exc)
@@ -138,9 +139,29 @@ class AgentBridge:
 
     def _do_stop(self) -> None:
         self._stop_event.set()
+        # Разблокировать ask_human если он ждёт ответа
         pq = self._pending_question
         if pq is not None:
             _, answer_event, answer_holder = pq
             answer_holder[0] = ""
             answer_event.set()
         self._running = False
+        # Принудительно бросить KeyboardInterrupt в поток агента.
+        # Без этого агент продолжает работать если он не вызывает ask_human
+        # (например зациклился в LLM-вызовах без ожидания ввода пользователя).
+        self._force_raise_in_thread()
+
+    def _force_raise_in_thread(self) -> None:
+        """Бросает KeyboardInterrupt в поток агента через CPython API."""
+        thread = self._thread
+        if thread is None or not thread.is_alive():
+            return
+        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+            ctypes.c_ulong(thread.ident),
+            ctypes.py_object(KeyboardInterrupt),
+        )
+        if res > 1:
+            # Откат если зацепило несколько потоков (не должно случаться)
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                ctypes.c_ulong(thread.ident), None
+            )

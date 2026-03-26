@@ -66,6 +66,14 @@ with st.sidebar:
         agent_name: str = st.session_state.get("ui_agent_name", "")
         start_message: str = st.session_state.get("ui_start_message", "") or ""
 
+        # Когда агент завершается — делаем полную перерисовку страницы,
+        # чтобы selectbox и text_area (вне фрагмента) разблокировались.
+        if st.session_state.get("_agent_was_running", False) and not b.is_running:
+            st.session_state["_agent_was_running"] = False
+            st.rerun(scope="app")
+        if b.is_running:
+            st.session_state["_agent_was_running"] = True
+
         col1, col2 = st.columns(2)
         run_clicked = col1.button(
             "▶ Запустить",
