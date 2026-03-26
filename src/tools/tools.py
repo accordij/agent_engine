@@ -10,6 +10,7 @@ _memory_store: Dict[str, Any] = {}
 _memory_log: list[str] = []
 
 _human_input_handler: Callable[[str], str] | None = None
+_ui_print_handler: Callable[[str], None] | None = None
 
 
 def set_human_input_handler(fn: Callable[[str], str]) -> None:
@@ -22,6 +23,29 @@ def clear_human_input_handler() -> None:
     """Сбросить обработчик ввода пользователя."""
     global _human_input_handler
     _human_input_handler = None
+
+
+def set_ui_print_handler(fn: Callable[[str], None]) -> None:
+    """Установить обработчик ui_print (вызывается из AgentBridge)."""
+    global _ui_print_handler
+    _ui_print_handler = fn
+
+
+def clear_ui_print_handler() -> None:
+    """Сбросить обработчик ui_print."""
+    global _ui_print_handler
+    _ui_print_handler = None
+
+
+def ui_print(text: str) -> None:
+    """Вывод для пользователя: в терминал всегда, в UI — если подключён.
+
+    Используйте вместо print() в инструментах, когда хотите показать
+    сообщение пользователю в интерфейсе.
+    """
+    print(text, flush=True)
+    if _ui_print_handler is not None:
+        _ui_print_handler(text)
 
 
 @tool
@@ -215,7 +239,7 @@ def think(thought: str) -> str:
     Returns:
         Подтверждение размышления
     """
-    print(f"\n💭 Размышление агента: {thought}", flush=True)
+    ui_print(f"💭 {thought}")
     return f"✓ Размышление зафиксировано: {thought}"
 
 

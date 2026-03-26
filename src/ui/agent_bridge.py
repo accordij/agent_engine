@@ -2,6 +2,7 @@
 
 Запускает агента в фоновом daemon-потоке и предоставляет:
 - лог событий (tool_start, ai_message, state_transition, ...)
+- перехват ui_print() из инструментов агента
 - механизм вопрос/ответ для инструмента ask_human
 - управление жизненным циклом (старт, стоп, перезапуск)
 """
@@ -13,7 +14,10 @@ from typing import Any
 
 from src.agents import build_agent, list_agents
 from src.agent_engine.logging_utils import set_ui_event_emitter, clear_ui_event_emitter
-from src.tools.tools import set_human_input_handler, clear_human_input_handler
+from src.tools.tools import (
+    set_human_input_handler, clear_human_input_handler,
+    set_ui_print_handler, clear_ui_print_handler,
+)
 
 
 class StopAgentException(Exception):
@@ -53,6 +57,7 @@ class AgentBridge:
 
         set_ui_event_emitter(self._handle_event)
         set_human_input_handler(self._ask_human_ui)
+        set_ui_print_handler(self._handle_ui_print)
 
         self._thread = threading.Thread(
             target=self._run,
@@ -117,10 +122,14 @@ class AgentBridge:
                 self._pending_question = None
                 clear_ui_event_emitter()
                 clear_human_input_handler()
+                clear_ui_print_handler()
 
     def _handle_event(self, event: dict[str, Any]) -> None:
         with self._events_lock:
             self._events.append(event)
+
+    def _handle_ui_print(self, text: str) -> None:
+        self._handle_event({"type": "print", "text": text})
 
     def _ask_human_ui(self, question: str) -> str:
         """Блокирует поток агента до получения ответа из UI."""

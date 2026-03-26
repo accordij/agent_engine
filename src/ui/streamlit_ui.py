@@ -115,34 +115,37 @@ with st.sidebar:
 
 
 # ------------------------------------------------------------------
-# Основная область — лента событий + вопрос/ответ
+# Основная область — лента сверху, вопрос/ответ снизу
 # ------------------------------------------------------------------
 
 st.header("Лента событий")
+
+# Высота прокручиваемой ленты (px): без вопроса — почти всё окно; с вопросом — место снизу под панель ответа.
+_FEED_SCROLL_FULL = 720
+_FEED_SCROLL_WITH_HUMAN = 420
 
 
 @st.fragment(run_every="0.5s")
 def agent_panel() -> None:
     b: AgentBridge = st.session_state.bridge
-
-    # Вопрос от агента — показываем поверх ленты
     pq = b.pending_question
+
+    feed_height = _FEED_SCROLL_WITH_HUMAN if pq is not None else _FEED_SCROLL_FULL
+    events = b.events
+    with st.container(height=feed_height, border=True):
+        if not events:
+            st.caption("Событий пока нет. Запустите агента.")
+        else:
+            for event in events:
+                _render_event(event)
+
     if pq is not None:
         with st.form("answer_form", clear_on_submit=True):
             st.warning(f"**Вопрос агента:** {pq}")
-            answer = st.text_input("Ваш ответ", key="answer_input")
+            answer = st.text_area("Ваш ответ", key="answer_input", height=88)
             submitted = st.form_submit_button("Отправить", type="primary")
         if submitted and answer.strip():
             b.send_answer(answer.strip())
-
-    # Лента событий
-    events = b.events
-    if not events:
-        st.caption("Событий пока нет. Запустите агента.")
-        return
-
-    for event in events:
-        _render_event(event)
 
 
 def _render_event(event: dict) -> None:
@@ -184,6 +187,10 @@ def _render_event(event: dict) -> None:
             f"**{event.get('from')}** → **{event.get('to')}**</span>",
             unsafe_allow_html=True,
         )
+
+    elif etype == "print":
+        with st.chat_message("tool", avatar="🛠️"):
+            st.markdown(event.get("text", ""))
 
     elif etype == "warning":
         st.warning(event.get("message", ""))
