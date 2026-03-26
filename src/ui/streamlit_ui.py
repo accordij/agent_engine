@@ -149,7 +149,7 @@ with st.sidebar:
         col1, col2 = st.columns(2)
         run_clicked = col1.button(
             "▶ Запустить",
-            disabled=b.is_running or not start_message.strip(),
+            disabled=b.is_running,
             use_container_width=True,
             type="primary",
             key="btn_run",
