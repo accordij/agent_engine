@@ -15,14 +15,76 @@ import yaml
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.connections.clients import get_llm_client
-from src.agent_engine.logging_utils import init_logging
-from src.ui.agent_bridge import AgentBridge
+# ------------------------------------------------------------------
+# Конфиг читается до первого st.* вызова (нужен для set_page_config)
+# ------------------------------------------------------------------
+
+with open(_PROJECT_ROOT / "config.yaml", encoding="utf-8") as _f:
+    _startup_cfg = yaml.safe_load(_f)
+
+_st_cfg: dict = _startup_cfg.get("streamlit", {})
+
+st.set_page_config(
+    page_title=_st_cfg.get("page_title", "Агентский движок"),
+    page_icon=_st_cfg.get("page_icon", "🤖"),
+    layout=_st_cfg.get("layout", "wide"),
+    initial_sidebar_state=_st_cfg.get("sidebar_state", "expanded"),
+)
+
+from src.connections.clients import get_llm_client          # noqa: E402
+from src.agent_engine.logging_utils import init_logging     # noqa: E402
+from src.ui.agent_bridge import AgentBridge                 # noqa: E402
 
 
 # ------------------------------------------------------------------
-# Инициализация (кэшируется на всё время жизни сервера)
+# Темы и шрифты
 # ------------------------------------------------------------------
+
+_THEMES: dict[str, dict[str, str]] = {
+    "light": {
+        "bg":         "#ffffff",
+        "sidebar_bg": "#f0f2f6",
+        "text":       "#31333f",
+        "primary":    "#ff4b4b",
+    },
+    "dark": {
+        "bg":         "#0e1117",
+        "sidebar_bg": "#262730",
+        "text":       "#fafafa",
+        "primary":    "#ff4b4b",
+    },
+    "catppuccin": {
+        "bg":         "#1e1e2e",
+        "sidebar_bg": "#181825",
+        "text":       "#cdd6f4",
+        "primary":    "#a6e3a1",
+    },
+}
+
+_FONT_PX: dict[str, int] = {"small": 13, "normal": 15, "large": 17, "xlarge": 19}
+_CODE_PX: dict[str, int] = {"small": 12, "normal": 13, "large": 14, "xlarge": 15}
+
+
+def _build_css() -> str:
+    c = _THEMES.get(_st_cfg.get("theme", "dark"), _THEMES["dark"])
+    fp = _FONT_PX.get(_st_cfg.get("font_size", "normal"), 15)
+    cp = _CODE_PX.get(_st_cfg.get("font_size_code", "small"), 13)
+    return f"""<style>
+.stApp                                          {{ background-color: {c['bg']}; }}
+[data-testid="stSidebar"]                       {{ background-color: {c['sidebar_bg']}; }}
+.stApp, [data-testid="stSidebar"]               {{ color: {c['text']}; }}
+.stMarkdown p, .stMarkdown li, .stMarkdown span {{ font-size: {fp}px; }}
+.stTextArea textarea, .stTextInput input        {{ font-size: {fp}px; }}
+code, pre, [data-testid="stCode"] *             {{ font-size: {cp}px !important; }}
+</style>"""
+
+
+# ------------------------------------------------------------------
+# Применяем CSS и инициализируем кэш
+# ------------------------------------------------------------------
+
+st.markdown(_build_css(), unsafe_allow_html=True)
+
 
 @st.cache_resource
 def _load_config() -> dict:
@@ -38,6 +100,17 @@ def _init_llm():
 
 
 # ------------------------------------------------------------------
+# Константы из конфига
+# ------------------------------------------------------------------
+
+_REFRESH_SIDEBAR   = _st_cfg.get("refresh_sidebar", "1s")
+_REFRESH_FEED      = _st_cfg.get("refresh_feed", "0.5s")
+_FEED_HEIGHT_FULL  = _st_cfg.get("feed_height_full", 720)
+_FEED_HEIGHT_WITH_Q = _st_cfg.get("feed_height_with_question", 420)
+_ANSWER_HEIGHT     = _st_cfg.get("answer_height", 88)
+
+
+# ------------------------------------------------------------------
 # Session state
 # ------------------------------------------------------------------
 
@@ -50,9 +123,8 @@ if "bridge" not in st.session_state:
 # ------------------------------------------------------------------
 
 with st.sidebar:
-    st.title("Агентский движок")
+    st.title(_st_cfg.get("page_title", "Агентский движок"))
 
-    # Поля ввода — хранятся в session_state по ключу, доступны из фрагмента
     bridge = st.session_state.bridge
     st.selectbox("Агент", bridge.available_agents(),
                  disabled=bridge.is_running, key="ui_agent_name")
@@ -60,7 +132,7 @@ with st.sidebar:
                  placeholder="Опишите задачу для агента...",
                  disabled=bridge.is_running, key="ui_start_message")
 
-    @st.fragment(run_every="1s")
+    @st.fragment(run_every=_REFRESH_SIDEBAR)
     def sidebar_controls() -> None:
         b: AgentBridge = st.session_state.bridge
         agent_name: str = st.session_state.get("ui_agent_name", "")
@@ -120,17 +192,13 @@ with st.sidebar:
 
 st.header("Лента событий")
 
-# Высота прокручиваемой ленты (px): без вопроса — почти всё окно; с вопросом — место снизу под панель ответа.
-_FEED_SCROLL_FULL = 720
-_FEED_SCROLL_WITH_HUMAN = 420
 
-
-@st.fragment(run_every="0.5s")
+@st.fragment(run_every=_REFRESH_FEED)
 def agent_panel() -> None:
     b: AgentBridge = st.session_state.bridge
     pq = b.pending_question
 
-    feed_height = _FEED_SCROLL_WITH_HUMAN if pq is not None else _FEED_SCROLL_FULL
+    feed_height = _FEED_HEIGHT_WITH_Q if pq is not None else _FEED_HEIGHT_FULL
     events = b.events
     with st.container(height=feed_height, border=True):
         if not events:
@@ -142,7 +210,7 @@ def agent_panel() -> None:
     if pq is not None:
         with st.form("answer_form", clear_on_submit=True):
             st.warning(f"**Вопрос агента:** {pq}")
-            answer = st.text_area("Ваш ответ", key="answer_input", height=88)
+            answer = st.text_area("Ваш ответ", key="answer_input", height=_ANSWER_HEIGHT)
             submitted = st.form_submit_button("Отправить", type="primary")
         if submitted and answer.strip():
             b.send_answer(answer.strip())

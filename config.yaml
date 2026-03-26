@@ -81,3 +81,32 @@ logging:
 # рекурсия графа агента (длина цепочки)
 agent:
   recursion_limit: 30
+
+
+# Streamlit UI
+streamlit:
+  # Заголовок и иконка вкладки браузера
+  page_title: "Агентский движок"
+  page_icon: "🤖"
+
+  # Раскладка страницы: "centered" (~700px по центру) или "wide" (вся ширина)
+  layout: "wide"
+  # Состояние сайдбара при запуске: "expanded" или "collapsed"
+  sidebar_state: "expanded"
+
+  # Частота обновления фрагментов (формат: "0.5s", "1s", "2s")
+  refresh_sidebar: "1s"    # кнопки Запустить / Стоп
+  refresh_feed: "0.5s"     # лента событий агента
+
+  # Высоты блоков в пикселях
+  feed_height_full: 720          # лента без активного вопроса
+  feed_height_with_question: 420 # лента когда агент задаёт вопрос
+  answer_height: 88              # поле ввода ответа агенту
+
+  # Тема интерфейса: "dark", "light", "catppuccin"
+  theme: "catppuccin"
+
+  # Размер шрифта основного текста: "small" (13px), "normal" (15px), "large" (17px), "xlarge" (19px)
+  font_size: "normal"
+  # Размер шрифта вывода инструментов и блоков кода: те же варианты
+  font_size_code: "small"
