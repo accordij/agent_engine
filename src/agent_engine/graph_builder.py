@@ -57,6 +57,39 @@ class AgentGraphBuilder:
         self.entry_point = state_name
         return self
 
+    def register_sub_agents(
+        self,
+        owner_agent_name: str,
+        sub_agents: list[str] | tuple[str, ...] | None,
+    ) -> None:
+        """Регистрирует под-агентов для мультиагентного сценария.
+
+        Правило декларативное: агент задает `sub_agents = [...]`,
+        а движок централизованно валидирует и регистрирует их.
+        """
+        if sub_agents is None:
+            return
+        if not isinstance(sub_agents, (list, tuple)):
+            raise TypeError("sub_agents должен быть list или tuple")
+
+        from src.agents import build_agent, list_agents
+        from src.tools.tools import register_agent
+
+        available_agents = set(list_agents())
+        for sub_agent_name in sub_agents:
+            if not isinstance(sub_agent_name, str) or not sub_agent_name.strip():
+                raise ValueError("Все элементы sub_agents должны быть непустыми строками")
+            if sub_agent_name == owner_agent_name:
+                raise ValueError(
+                    f"Нельзя регистрировать '{owner_agent_name}' как подчиненного самому себе"
+                )
+            if sub_agent_name not in available_agents:
+                available = ", ".join(sorted(available_agents))
+                raise ValueError(
+                    f"Подчиненный агент '{sub_agent_name}' не найден. Доступные агенты: {available}"
+                )
+            register_agent(sub_agent_name, build_agent(sub_agent_name, self.llm))
+
     def build(self):
         if not self.entry_point:
             raise ValueError("Точка входа не установлена. Используйте set_entry()")

@@ -4,14 +4,10 @@ from src.agent_engine import AgentConfig, State
 
 
 class SupervisorAgent(AgentConfig):
-    """Граф: [delegate] → [aggregate] → END
-
-    ВАЖНО: Перед использованием нужно зарегистрировать подчиненных агентов:
-        from src.tools.tools import register_agent
-        register_agent("test_agent", test_agent_instance)
-    """
+    """Граф: [delegate] → [aggregate] → END."""
 
     entry_point = "delegate"
+    sub_agents = ["test_agent", "router_agent"]
 
     states = [
         State(

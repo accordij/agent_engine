@@ -28,11 +28,13 @@ class AgentConfig:
 
     states: list[State] = []
     entry_point: str | None = None
+    sub_agents: list[str] | tuple[str, ...] | None = None
 
     def __init__(self, llm, tools_dict: Dict[str, Any], agent_id: str | None = None):
         self.llm = llm
         self.tools_dict = tools_dict
         self.agent_id = agent_id or f"{self.__class__.__name__}_{id(self)}"
+        self.agent_name = self.__class__.__module__.split(".")[-2]
         self._graph = None
 
         if not self.states:
@@ -48,6 +50,10 @@ class AgentConfig:
 
     def build(self):
         builder = AgentGraphBuilder(self.llm, self.tools_dict)
+        builder.register_sub_agents(
+            owner_agent_name=self.agent_name,
+            sub_agents=getattr(self, "sub_agents", None),
+        )
         builder.add_states(self.states)
         builder.set_entry(self.entry_point)
         self._graph = builder.build()
