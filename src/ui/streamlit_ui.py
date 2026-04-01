@@ -258,7 +258,8 @@ def _render_event(event: dict) -> None:
 
     elif etype == "print":
         with st.chat_message("tool", avatar="🛠️"):
-            st.markdown(event.get("text", ""))
+            text = event.get("text", "")
+            st.markdown(text.replace("\n", "  \n"))
 
     elif etype == "warning":
         st.warning(event.get("message", ""))
