@@ -40,6 +40,41 @@ class MyAgent(AgentConfig):
 - `src/agents/router_agent/agent.py` (ветвление/роутинг);
 - `src/agents/supervisor_agent/agent.py` (композиция агентов).
 
+## 1.1) Мультиагенты (`sub_agents` + `call_agent`)
+
+Для композиции агентов используйте декларативный список `sub_agents` в `agent.py`.
+Движок автоматически валидирует имена, собирает и регистрирует этих агентов при сборке графа.
+
+```python
+from src.agent_engine import AgentConfig, State
+
+
+class SupervisorAgent(AgentConfig):
+    entry_point = "delegate"
+    sub_agents = ["test_agent", "router_agent"]  # авто-регистрация движком
+
+    states = [
+        State(
+            name="delegate",
+            tools=["call_agent", "memory", "think"],
+            prompt="Координируй под-агентов и в конце вызови transition.",
+            transitions=["aggregate"],
+        ),
+        State(
+            name="aggregate",
+            tools=["memory", "summarize", "think"],
+            prompt="Собери итог и ОБЯЗАТЕЛЬНО вызови transition(next_state='END').",
+            transitions=["END"],
+        ),
+    ]
+```
+
+Важно:
+- ручной `register_agent(...)` для `sub_agents` больше не нужен;
+- `sub_agents` должен быть `list`/`tuple` непустых строк;
+- нельзя добавлять самого себя в `sub_agents`;
+- если в конце шага не вызвать `transition(...)`, агент останется в том же состоянии (`stay`/re-entry), что выглядит как "зависание".
+
 ## 2) Инструменты: shared vs agent-specific
 
 ### Shared инструменты
@@ -174,14 +209,87 @@ streamlit run src/ui/streamlit_ui.py
 | Агент | Граф | Пример стартового сообщения |
 |---|---|---|
 | `test_agent` | `[work] → END` | `Вычисли 2^10 + 144 / 12` |
-| `my_agent` | `[work] → [summarize] → END` | `Посчитай среднее арифметическое чисел 17, 34, 52, 89` |
+| `my_agent` | `[work] → [summarize] → END` | `Посчитай среднее арифметическое чисел 17, 34, 52, 89` или `Нарисуй график продаж по кварталам: Q1=120, Q2=95, Q3=140, Q4=200` |
 | `router_agent` | `[classify] → [math\|text\|error] → END` | `Сколько будет 15% от 3200?` или `Объясни что такое рекурсия` |
 | `audit_agent` | зависит от реализации | произвольная задача |
-| `supervisor_agent` | `[delegate] → [aggregate] → END` | требует предварительной регистрации подагентов |
+| `supervisor_agent` | `[delegate] → [aggregate] → END` | использует `sub_agents` (авто-регистрация движком) |
 
 **Настройка внешнего вида** задаётся в `config.yaml` в секции `streamlit:` — тема (`dark` / `light` / `catppuccin`), размеры блоков, шрифты, частота обновления.
 
-## 6) Минимальный запуск (из кода)
+## 6) Вывод в ленту событий: текст и изображения
+
+Из любого инструмента можно напрямую вставить контент в ленту событий Streamlit — без дополнительных вызовов агента.
+
+### `ui_print(text)` — текстовое сообщение
+
+```python
+from src.tools.tools import ui_print
+
+ui_print("Промежуточный результат: 42")
+```
+
+В терминале выводится всегда; в Streamlit — как отдельный блок `tool`-сообщения в ленте.
+
+### `ui_image(path, caption="")` — изображение
+
+```python
+from src.tools.tools import ui_image
+
+ui_image("/abs/path/to/chart.png", caption="Продажи за Q1")
+```
+
+Сохраните файл на диск любым способом (matplotlib, PIL, cv2 и т.д.), затем вызовите `ui_image` — картинка сразу появится в ленте событий.
+
+**Правила:**
+- путь должен быть доступен процессу Streamlit (абсолютный или относительный от корня проекта);
+- если файл не найден — в ленте появится предупреждение вместо картинки;
+- `ui_image` ничего не возвращает и не блокирует — вызов безопасен вне UI-режима.
+
+### Пример: инструмент с графиком
+
+Полный рабочий пример — `src/agents/my_agent/tools.py`, инструмент `plot_chart`:
+
+```python
+import matplotlib
+matplotlib.use("Agg")           # backend устанавливается один раз на уровне модуля
+import matplotlib.pyplot as plt
+
+from src.tools.tools import ui_image
+
+@tool
+def plot_chart(title: str, labels: str, values: str, chart_type: str = "bar") -> str:
+    """Строит график и показывает его пользователю в интерфейсе.
+
+    После успешного построения вызови transition для перехода к следующему состоянию.
+    """
+    # ... парсинг, построение графика ...
+    plt.savefig(str(filepath), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    ui_image(str(filepath), caption=title)      # → картинка в ленте Streamlit
+    return f"График '{title}' построен и отображён пользователю"
+```
+
+**Важно:** `matplotlib.use("Agg")` и `import matplotlib.pyplot as plt` должны быть на уровне модуля, а не внутри функции. При переносе внутрь функции на повторных вызовах matplotlib сбрасывает состояние и сохраняет пустой белый файл.
+
+### Регистрация инструмента в агенте
+
+```python
+# src/agents/my_agent/tools.py
+TOOLS = [plot_chart]
+
+# src/agents/my_agent/agent.py
+State(
+    name="work",
+    tools=["memory", "think", "plot_chart"],
+    prompt="... 7. Вызови transition(next_state='summarize') — обязательный последний шаг",
+    transitions=["summarize"],
+)
+```
+
+Тестовый запрос для `my_agent`: `Нарисуй столбчатый график продаж по кварталам: Q1=120, Q2=95, Q3=140, Q4=200`
+
+## 7) Минимальный запуск (из кода)
 
 ```python
 import yaml
@@ -203,7 +311,7 @@ result = agent.invoke(["Реши задачу пользователя"], config
 print(result["messages"][-1].content)
 ```
 
-## 7) Частые ошибки
+## 8) Частые ошибки
 
 - `entry_point` не совпадает с именем состояния в `states`.
 - В `transitions` указан state, которого нет в графе.

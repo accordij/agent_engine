@@ -11,6 +11,7 @@ _memory_log: list[str] = []
 
 _human_input_handler: Callable[[str], str] | None = None
 _ui_print_handler: Callable[[str], None] | None = None
+_ui_image_handler: Callable[[str, str], None] | None = None
 
 
 def set_human_input_handler(fn: Callable[[str], str]) -> None:
@@ -37,6 +38,18 @@ def clear_ui_print_handler() -> None:
     _ui_print_handler = None
 
 
+def set_ui_image_handler(fn: Callable[[str, str], None]) -> None:
+    """Установить обработчик ui_image (вызывается из AgentBridge)."""
+    global _ui_image_handler
+    _ui_image_handler = fn
+
+
+def clear_ui_image_handler() -> None:
+    """Сбросить обработчик ui_image."""
+    global _ui_image_handler
+    _ui_image_handler = None
+
+
 def ui_print(text: str) -> None:
     """Вывод для пользователя: в терминал всегда, в UI — если подключён.
 
@@ -46,6 +59,20 @@ def ui_print(text: str) -> None:
     print(text, flush=True)
     if _ui_print_handler is not None:
         _ui_print_handler(text)
+
+
+def ui_image(path: str, caption: str = "") -> None:
+    """Отображает изображение в UI — если Streamlit подключён.
+
+    Используйте в инструментах после сохранения файла на диск,
+    чтобы картинка автоматически появилась в ленте событий.
+
+    Args:
+        path: Абсолютный или относительный путь к файлу изображения.
+        caption: Подпись под изображением (необязательно).
+    """
+    if _ui_image_handler is not None:
+        _ui_image_handler(path, caption)
 
 
 @tool

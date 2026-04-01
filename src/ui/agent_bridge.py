@@ -17,6 +17,7 @@ from src.agent_engine.logging_utils import set_ui_event_emitter, clear_ui_event_
 from src.tools.tools import (
     set_human_input_handler, clear_human_input_handler,
     set_ui_print_handler, clear_ui_print_handler,
+    set_ui_image_handler, clear_ui_image_handler,
 )
 
 
@@ -58,6 +59,7 @@ class AgentBridge:
         set_ui_event_emitter(self._handle_event)
         set_human_input_handler(self._ask_human_ui)
         set_ui_print_handler(self._handle_ui_print)
+        set_ui_image_handler(self._handle_ui_image)
 
         self._thread = threading.Thread(
             target=self._run,
@@ -123,6 +125,7 @@ class AgentBridge:
                 clear_ui_event_emitter()
                 clear_human_input_handler()
                 clear_ui_print_handler()
+                clear_ui_image_handler()
 
     def _handle_event(self, event: dict[str, Any]) -> None:
         with self._events_lock:
@@ -130,6 +133,9 @@ class AgentBridge:
 
     def _handle_ui_print(self, text: str) -> None:
         self._handle_event({"type": "print", "text": text})
+
+    def _handle_ui_image(self, path: str, caption: str) -> None:
+        self._handle_event({"type": "image", "path": path, "caption": caption})
 
     def _ask_human_ui(self, question: str) -> str:
         """Блокирует поток агента до получения ответа из UI."""

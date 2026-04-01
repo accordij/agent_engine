@@ -267,6 +267,14 @@ def _render_event(event: dict) -> None:
     elif etype == "error":
         st.error(f"**Ошибка:** {event.get('message', '')}")
 
+    elif etype == "image":
+        path = event.get("path", "")
+        caption = event.get("caption") or None
+        if Path(path).exists():
+            st.image(path, caption=caption)
+        else:
+            st.warning(f"Изображение не найдено: {path}")
+
     elif etype == "stopped":
         st.warning(event.get("message", "Остановлено"))
 
