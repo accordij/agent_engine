@@ -7,7 +7,6 @@ import pkgutil
 
 
 _memory_store: Dict[str, Any] = {}
-_memory_log: list[str] = []
 
 _human_input_handler: Callable[[str], str] | None = None
 _ui_print_handler: Callable[[str], None] | None = None
@@ -190,33 +189,9 @@ def memory(
 
 
 def reset_memory() -> None:
-    """Сбрасывает память агента (глобальные хранилища)."""
-    global _memory_store, _memory_log
+    """Сбрасывает память агента."""
+    global _memory_store
     _memory_store = {}
-    _memory_log = []
-
-
-@tool
-def memory_append(text: str) -> str:
-    """Добавляет строку в журнал памяти (append-only)."""
-    global _memory_log
-    if text is None:
-        return "Ошибка: text не может быть пустым"
-    _memory_log.append(str(text))
-    return f"✓ Добавлено в журнал: {text}"
-
-
-@tool
-def memory_read(limit: int = 0) -> str:
-    """Возвращает журнал памяти. Если limit > 0, возвращает последние N строк."""
-    global _memory_log
-    if not _memory_log:
-        return "Журнал памяти пуст"
-    if isinstance(limit, int) and limit > 0:
-        lines = _memory_log[-limit:]
-    else:
-        lines = _memory_log
-    return "\n".join(lines)
 
 
 @tool
@@ -274,8 +249,6 @@ core_tools = [
     calculator,
     ask_human,
     memory,
-    memory_append,
-    memory_read,
     summarize,
     think
 ]
