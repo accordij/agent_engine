@@ -36,6 +36,7 @@ class AgentBridge:
         self._pending_question: tuple | None = None  # (question, answer_event, answer_holder)
         self._running = False
         self._error: str | None = None
+        self.last_session_id: str | None = None  # session_id последнего запуска
         # Счётчик поколений: предотвращает сброс _running старым потоком
         # после того как новый уже запустился.
         self._generation = 0
@@ -45,8 +46,14 @@ class AgentBridge:
     # ------------------------------------------------------------------
 
     def start(self, agent_name: str, start_message: str, llm: Any,
-              recursion_limit: int = 100) -> None:
-        """Остановить предыдущий запуск (если был) и запустить агента заново."""
+              recursion_limit: int = 100,
+              session_id: str | None = None) -> None:
+        """Остановить предыдущий запуск (если был) и запустить агента заново.
+
+        Args:
+            session_id: если передан — продолжает существующую сессию;
+                        None — создаётся новая сессия автоматически.
+        """
         self._do_stop()
         self._stop_event.clear()
         with self._events_lock:
@@ -63,7 +70,7 @@ class AgentBridge:
 
         self._thread = threading.Thread(
             target=self._run,
-            args=(agent_name, start_message, llm, recursion_limit, self._generation),
+            args=(agent_name, start_message, llm, recursion_limit, self._generation, session_id),
             daemon=True,
         )
         self._thread.start()
@@ -107,10 +114,17 @@ class AgentBridge:
     # ------------------------------------------------------------------
 
     def _run(self, agent_name: str, start_message: str, llm: Any,
-             recursion_limit: int, generation: int) -> None:
+             recursion_limit: int, generation: int,
+             session_id: str | None = None) -> None:
         try:
             agent = build_agent(agent_name, llm)
-            agent.invoke([start_message], config={"recursion_limit": recursion_limit})
+            agent.invoke(
+                [start_message],
+                session_id=session_id,
+                config={"recursion_limit": recursion_limit},
+            )
+            # Сохраняем session_id последнего запуска для UI
+            self.last_session_id = agent.last_session_id
         except (StopAgentException, KeyboardInterrupt):
             self._handle_event({"type": "stopped", "message": "Агент остановлен пользователем"})
         except Exception as exc:

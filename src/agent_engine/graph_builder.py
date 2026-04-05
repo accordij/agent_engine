@@ -90,7 +90,7 @@ class AgentGraphBuilder:
                 )
             register_agent(sub_agent_name, build_agent(sub_agent_name, self.llm))
 
-    def build(self):
+    def build(self, checkpointer=None):
         if not self.entry_point:
             raise ValueError("Точка входа не установлена. Используйте set_entry()")
         if not self.states:
@@ -104,7 +104,7 @@ class AgentGraphBuilder:
 
         workflow.set_entry_point(self.entry_point)
 
-        return workflow.compile()
+        return workflow.compile(checkpointer=checkpointer)
 
     def _make_transition_tool(self, state: State):
         allowed = ["stay"] + state.transitions

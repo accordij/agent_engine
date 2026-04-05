@@ -18,7 +18,8 @@
 8. [Запуск](#8-запуск)
 9. [Логирование](#9-логирование)
 10. [Конфигурация](#10-конфигурация)
-11. [Частые ошибки](#11-частые-ошибки)
+11. [Сессии и чекпоинты](#11-сессии-и-чекпоинты)
+12. [Частые ошибки](#12-частые-ошибки)
 
 ---
 
@@ -687,7 +688,116 @@ logging:
 
 ---
 
-## 11. Частые ошибки
+## 11. Сессии и чекпоинты
+
+Движок автоматически сохраняет полный `AgentState` после каждого шага агента в SQLite-базу. Это позволяет восстановить работу после падения, загрузиться с любой точки истории и тестировать агента с разными параметрами.
+
+### Как включить
+
+В `config.yaml`:
+
+```yaml
+sessions:
+  enabled: true
+  db_path: "sessions/checkpoints.db"     # SQLite с состояниями
+  registry_path: "sessions/sessions.json" # реестр сессий и имён
+  max_sessions_per_agent: 20              # 0 = безлимит
+```
+
+При загрузке агента старые сессии сверх лимита удаляются автоматически. Сессии с именованными чекпоинтами защищены от удаления.
+
+### Два типа чекпоинтов
+
+**Авто-чекпоинты** — создаются LangGraph после каждого node. Хранятся до лимита `max_sessions_per_agent`.
+
+**Именованные чекпоинты** — пользователь тегирует любой авто-чекпоинт. Защищены от авто-удаления, живут пока не удалишь вручную.
+
+### API агента
+
+```python
+# Новая сессия создаётся автоматически
+result = agent.invoke(["Задача..."])
+session_id = agent.last_session_id
+
+# Продолжить ту же сессию (добавить сообщение)
+result = agent.invoke(["Уточнение..."], session_id=session_id)
+
+# Восстановить после падения (resume с последнего checkpoint)
+result = agent.resume(session_id)
+
+# Просмотр истории чекпоинтов
+for cp in agent.list_checkpoints(session_id):
+    print(cp["state_name"], cp["timestamp"], cp.get("name", ""))
+
+# Тегировать последний чекпоинт
+agent.tag_checkpoint(session_id, "baseline_v1", note="до смены схемы")
+
+# Посмотреть состояние в точке чекпоинта
+state = agent.get_checkpoint_state("baseline_v1")
+print(state["memory"])
+
+# Форк — новая независимая сессия из именованного чекпоинта
+new_sid = agent.fork("baseline_v1")
+result = agent.invoke(["Повтори"], session_id=new_sid)
+
+# Форк с правками — изменить память перед запуском
+new_sid = agent.fork(
+    "baseline_v1",
+    edits={"memory": {"db_schema": "orders_v2"}},
+    description="тест с новой схемой",
+)
+result = agent.invoke(["Повтори анализ"], session_id=new_sid)
+```
+
+### SessionManager напрямую
+
+```python
+from src.agent_engine import SessionManager
+from pathlib import Path
+
+sm = SessionManager(
+    db_path="sessions/checkpoints.db",
+    registry_path="sessions/sessions.json",
+)
+
+# Список сессий агента
+for s in sm.list_sessions("my_agent"):
+    print(s["session_id"][:8], s["description"])
+
+# Список именованных чекпоинтов
+for cp in sm.list_named_checkpoints():
+    print(cp["name"], cp["note"])
+
+# Переименовать
+sm.rename_checkpoint("baseline_v1", "baseline_final")
+
+# Удалить именованный чекпоинт (сессия остаётся)
+sm.delete_named_checkpoint("baseline_final")
+
+# Удалить сессию целиком (включая все её чекпоинты из SQLite)
+sm.delete_session(session_id)
+```
+
+### Хранилище
+
+```
+sessions/
+  checkpoints.db    # LangGraph SQLite: messages, memory, summary на каждом шаге
+  sessions.json     # реестр: метаданные сессий + именованные чекпоинты
+```
+
+Папка `sessions/` добавлена в `.gitignore`.
+
+### UI
+
+В Streamlit-интерфейсе появился раздел **«Сессии и чекпоинты»** в сайдбаре:
+- Список сессий текущего агента
+- Для каждой сессии — список чекпоинтов с именем state и временем
+- Кнопки: **Просмотр** (содержимое в ленте событий), **Старт** (форк и запуск), **Назвать** (тегировать), **Редактировать** (правка memory/summary перед стартом), **Удалить**
+
+---
+
+## 12. Частые ошибки
 
 ### Агент не вызвал `transition` и завис
 

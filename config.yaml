@@ -82,6 +82,19 @@ logging:
 agent:
   recursion_limit: 30
 
+# Сессии и чекпоинты агента
+sessions:
+  # Включить сохранение сессий (LangGraph SqliteSaver)
+  enabled: true
+  # Путь к SQLite БД (относительно корня проекта)
+  db_path: "sessions/checkpoints.db"
+  # Путь к реестру сессий и именованных чекпоинтов
+  registry_path: "sessions/sessions.json"
+  # Максимальное число сессий на одного агента (0 = безлимит)
+  # Старые сессии удаляются при загрузке агента.
+  # Сессии с именованными чекпоинтами защищены от удаления.
+  max_sessions_per_agent: 20
+
 
 # Streamlit UI
 streamlit:
