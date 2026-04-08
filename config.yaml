@@ -109,7 +109,7 @@ streamlit:
 
   # Частота обновления фрагментов (формат: "0.5s", "1s", "2s")
   refresh_sidebar: "1s"    # кнопки Запустить / Стоп
-  refresh_feed: "0.5s"     # лента событий агента
+  refresh_feed: "1s"     # лента событий агента
 
   # Высоты блоков в пикселях
   feed_height_full: 720          # лента без активного вопроса
@@ -117,7 +117,7 @@ streamlit:
   answer_height: 88              # поле ввода ответа агенту
 
   # Тема интерфейса: "dark", "light", "catppuccin"
-  theme: "catppuccin"
+  theme: "light"
 
   # Размер шрифта основного текста: "small" (13px), "normal" (15px), "large" (17px), "xlarge" (19px)
   font_size: "normal"

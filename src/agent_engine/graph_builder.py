@@ -280,6 +280,15 @@ class AgentGraphBuilder:
             if state.on_enter:
                 state_data = state.on_enter(state_data)
 
+            # Синхронизируем _memory_store из стейта.
+            # Критично при resume/fork: checkpoint содержит актуальную память,
+            # а глобальный _memory_store может быть устаревшим или пустым.
+            from src.tools.tools import _memory_store
+            state_memory = state_data.get("memory") or {}
+            _memory_store.clear()
+            _memory_store.update(state_memory)
+            _memory_store.pop(_TRANSITION_KEY, None)
+
             summary = state_data.get("summary", "")
             messages = [SystemMessage(content=full_prompt)]
 
@@ -301,9 +310,6 @@ class AgentGraphBuilder:
                     messages.append(msg)
 
             messages.extend(self._build_memory_injection_messages(state))
-
-            from src.tools.tools import _memory_store
-            _memory_store.pop(_TRANSITION_KEY, None)
 
             inner_config = {"recursion_limit": 25}
             if config:

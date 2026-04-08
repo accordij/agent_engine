@@ -1,12 +1,40 @@
 """Базовый класс для конфигурации агентов."""
 from __future__ import annotations
 
+
+class NothingToResumeError(Exception):
+    """Сессия уже завершилась — нечего продолжать.
+
+    Бросается из resume() когда граф дошёл до END.
+    Используй другой checkpoint или создай форк через fork().
+
+    Атрибуты:
+        session_id: ID сессии которую пытались возобновить.
+    """
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(
+            f"Сессия '{session_id[:8]}...' уже завершена (END). "
+            "Восстанавливать нечего. "
+            "Выбери другой checkpoint или создай форк через fork()."
+        )
+
+import contextvars
 from pathlib import Path
 from typing import Any, Dict
 
 from .graph_builder import AgentGraphBuilder
 from .state import State
 from .logging_utils import create_callbacks, log_run_start, log_run_end
+
+# Хранит session_id текущего активного вызова invoke().
+# ContextVar — thread-safe: каждый поток имеет свой контекст,
+# поэтому supervisor и sub-агент в одном потоке видят разные значения
+# (sub-агент перекрывает значение своим session_id, но не затирает supervisor-а).
+_active_session_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_active_session_ctx", default=None
+)
 
 
 def _load_sessions_config() -> dict:
@@ -23,17 +51,31 @@ def _load_sessions_config() -> dict:
         return {}
 
 
+# Синглтон: один SessionManager на db_path — все агенты делят одно соединение.
+# Ключ — абсолютный путь к БД чекпоинтов.
+_SM_REGISTRY: dict[str, Any] = {}
+
+
 def _make_session_manager():
-    """Создаёт SessionManager из config.yaml или возвращает None."""
+    """Вернуть SessionManager из config.yaml (синглтон по db_path).
+
+    Все AgentConfig с одинаковым db_path используют один объект и одно
+    SQLite-соединение. Это важно для мультиагентных схем: sub-агенты
+    создаются внутри run-а supervisor-а и не должны порождать лишние
+    соединения и лишние вызовы prune_on_load().
+    """
     cfg = _load_sessions_config()
     if not cfg.get("enabled", False):
         return None
     try:
         from .session_manager import SessionManager
         project_root = Path(__file__).parent.parent.parent
-        db_path = project_root / cfg.get("db_path", "sessions/checkpoints.db")
-        registry_path = project_root / cfg.get("registry_path", "sessions/sessions.json")
-        return SessionManager(db_path=db_path, registry_path=registry_path)
+        db_path = (project_root / cfg.get("db_path", "sessions/checkpoints.db")).resolve()
+        key = str(db_path)
+        if key not in _SM_REGISTRY:
+            registry_path = project_root / cfg.get("registry_path", "sessions/sessions.json")
+            _SM_REGISTRY[key] = SessionManager(db_path=db_path, registry_path=registry_path)
+        return _SM_REGISTRY[key]
     except Exception:
         return None
 
@@ -147,6 +189,11 @@ class AgentConfig:
         """
         if isinstance(messages, dict):
             state = messages
+        elif session_id is not None:
+            # Продолжение существующей сессии или форк: передаём только новые сообщения.
+            # LangGraph сам подтянет memory и summary из последнего checkpoint-а —
+            # явная передача {} перетёрла бы сохранённую память.
+            state = {"messages": messages}
         else:
             state = {"messages": messages, "memory": {}, "summary": ""}
 
@@ -165,10 +212,14 @@ class AgentConfig:
             default_config.update(config)
 
         self.last_session_id = session_id
+        # Публикуем session_id в контекст потока — call_agent читает его
+        # как supervisor_session для crash recovery sub-агентов.
+        _token = _active_session_ctx.set(session_id)
         log_run_start(self.agent_id)
         try:
             result = self.graph.invoke(state, config=default_config)
         finally:
+            _active_session_ctx.reset(_token)
             log_run_end(self.agent_id, handler)
             if self._sm is not None and session_id:
                 self._sm.update_session_meta(session_id, last_state="END")
@@ -195,10 +246,13 @@ class AgentConfig:
         if config:
             default_config.update(config)
 
+        self.last_session_id = session_id
+        _token = _active_session_ctx.set(session_id)
         log_run_start(self.agent_id)
         try:
             yield from self.graph.stream(state, config=default_config)
         finally:
+            _active_session_ctx.reset(_token)
             log_run_end(self.agent_id, handler)
             if self._sm is not None and session_id:
                 self._sm.update_session_meta(session_id, last_state="END")
@@ -208,12 +262,26 @@ class AgentConfig:
     # ------------------------------------------------------------------
 
     def resume(self, session_id: str) -> dict:
-        """Продолжить прерванную сессию (восстановление после падения).
+        """Продолжить прерванную сессию (восстановление после краша).
 
-        Загружает _memory_store из последнего чекпоинта и продолжает
-        граф с того node, на котором остановился агент.
+        Проверяет состояние графа перед запуском:
+        - Граф прерван (snap.next не пустой): восстанавливает _memory_store
+          и продолжает выполнение с прерванного node.
+        - Граф завершён (END): бросает NothingToResumeError.
+          Крон/скрипт должен поймать это исключение как сигнал «всё в порядке,
+          перезапускать не нужно» — без лишних трат токенов.
+
+        Raises:
+            NothingToResumeError: сессия уже завершена, восстанавливать нечего.
         """
         self._require_sessions()
+
+        snap_config = {"configurable": {"thread_id": session_id}}
+        snap = self.graph.get_state(snap_config)
+
+        if not snap or not snap.next:
+            raise NothingToResumeError(session_id)
+
         self._restore_memory(session_id)
 
         callbacks, handler = create_callbacks()
@@ -224,13 +292,34 @@ class AgentConfig:
         if callbacks:
             run_config["callbacks"] = callbacks
 
+        self.last_session_id = session_id
+        _token = _active_session_ctx.set(session_id)
         log_run_start(self.agent_id)
         try:
             result = self.graph.invoke(None, config=run_config)
         finally:
+            _active_session_ctx.reset(_token)
             log_run_end(self.agent_id, handler)
             self._sm.update_session_meta(session_id, last_state="END")
         return result
+
+    def restore_memory(self, session_id: str, checkpoint_id: str | None = None) -> dict:
+        """Восстановить _memory_store из checkpoint-а без запуска агента.
+
+        Используй когда нужно только загрузить состояние памяти:
+        - после перезапуска ядра ноутбука
+        - для инспекции содержимого конкретного checkpoint-а
+        - перед fork() чтобы проверить что будет в памяти
+
+        Args:
+            session_id: ID сессии.
+            checkpoint_id: конкретный checkpoint (None = последний).
+
+        Returns:
+            Словарь memory из checkpoint-а.
+        """
+        self._require_sessions()
+        return self._restore_memory(session_id, checkpoint_id=checkpoint_id)
 
     def list_checkpoints(self, session_id: str) -> list[dict]:
         """Список всех чекпоинтов сессии от новых к старым.
@@ -249,14 +338,37 @@ class AgentConfig:
 
         result = []
         for snap in history:
+            meta = snap.metadata or {}
+
+            # "input" — LangGraph-чекпоинт ДО первого node (сырой входной стейт).
+            # Память и summary там пустые, для пользователя бесполезен.
+            # Фильтруем по source, а не по writes.keys(): в ряде версий LangGraph 0.2
+            # writes может быть None даже для реальных нод, и тогда все чекпоинты
+            # ошибочно маркировались бы как __start__.
+            if meta.get("source") == "input":
+                continue
+
             cp_id = snap.config["configurable"].get("checkpoint_id", "")
-            # Имя node, которая создала этот checkpoint
-            writes = snap.metadata.get("writes") or {}
-            state_name = next(iter(writes.keys()), "__start__")
+
+            # Определяем имя ноды: writes.keys() содержит имена нод которые
+            # записали этот checkpoint. Пропускаем внутренние ключи LangGraph.
+            writes = meta.get("writes") or {}
+            _INTERNAL_KEYS = {"__start__", "__end__", "__copy__", "__root__"}
+            real_keys = [k for k in writes if k not in _INTERNAL_KEYS]
+            if real_keys:
+                state_name = real_keys[0]
+            else:
+                # writes пустой или None (специфика Command-нод в ряде версий LG)
+                # — показываем шаг выполнения как fallback
+                state_name = f"step_{meta.get('step', '?')}"
+
+            # created_at — прямой атрибут StateSnapshot, не поле metadata
+            timestamp = snap.created_at or meta.get("created_at", "")
+
             result.append({
                 "checkpoint_id": cp_id,
                 "state_name": state_name,
-                "timestamp": snap.metadata.get("created_at", ""),
+                "timestamp": timestamp,
                 "next": list(snap.next),
                 "is_named": cp_id in pinned_ids,
                 "name": pinned_ids.get(cp_id),
@@ -321,22 +433,36 @@ class AgentConfig:
         checkpoint_ref: str,
         edits: dict | None = None,
         description: str | None = None,
+        checkpoint_id: str | None = None,
     ) -> str:
-        """Создать новую независимую сессию из именованного чекпоинта.
+        """Создать новую независимую сессию из чекпоинта.
 
         Форк создаёт новый thread_id, копируя состояние из checkpoint_ref
         с опциональными правками. Оригинальная сессия не изменяется.
 
+        Два способа указать источник:
+        1. По имени тега (именованный чекпоинт):
+               fork("baseline_v1")
+        2. По session_id + checkpoint_id (любой авто-чекпоинт из виджета/кода):
+               fork(session_id, checkpoint_id="abc123...")
+
         Args:
-            checkpoint_ref: имя именованного чекпоинта.
+            checkpoint_ref: имя именованного чекпоинта ИЛИ session_id если
+                            передан аргумент checkpoint_id.
             edits: правки к AgentState, например {"memory": {"key": "new_val"}}.
-            description: описание новой сессии (по умолчанию "fork от <name>").
+            description: описание новой сессии.
+            checkpoint_id: конкретный checkpoint_id внутри session_id.
+                           Если передан — checkpoint_ref трактуется как session_id.
 
         Returns:
             session_id новой сессии. Запустите агента через invoke(messages, session_id=...).
         """
         self._require_sessions()
-        thread_id, checkpoint_id = self._resolve_checkpoint_ref(checkpoint_ref)
+        if checkpoint_id is not None:
+            # Явно передан checkpoint_id → checkpoint_ref является session_id
+            thread_id = checkpoint_ref
+        else:
+            thread_id, checkpoint_id = self._resolve_checkpoint_ref(checkpoint_ref)
 
         # Получаем снимок состояния в точке чекпоинта
         source_snap = self.graph.get_state(
@@ -395,16 +521,28 @@ class AgentConfig:
             "Сначала создайте его через tag_checkpoint()."
         )
 
-    def _restore_memory(self, session_id: str) -> None:
-        """Синхронизировать глобальный _memory_store из последнего чекпоинта."""
+    def _restore_memory(self, session_id: str, checkpoint_id: str | None = None) -> dict:
+        """Синхронизировать глобальный _memory_store из checkpoint-а.
+
+        Args:
+            session_id: ID сессии.
+            checkpoint_id: конкретный checkpoint (None = последний).
+
+        Returns:
+            Словарь memory из checkpoint-а (пустой если не найден).
+        """
         try:
             from src.tools.tools import _memory_store
-            snap = self.graph.get_state({"configurable": {"thread_id": session_id}})
-            if snap and snap.values.get("memory"):
-                _memory_store.clear()
-                _memory_store.update(snap.values["memory"])
+            cfg: dict = {"configurable": {"thread_id": session_id}}
+            if checkpoint_id:
+                cfg["configurable"]["checkpoint_id"] = checkpoint_id
+            snap = self.graph.get_state(cfg)
+            memory = (snap.values.get("memory") or {}) if snap else {}
+            _memory_store.clear()
+            _memory_store.update(memory)
+            return dict(memory)
         except Exception:
-            pass
+            return {}
 
     def visualize(self) -> str:
         builder = AgentGraphBuilder(self.llm, self.tools_dict)

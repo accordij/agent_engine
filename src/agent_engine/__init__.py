@@ -26,7 +26,7 @@
 
 from .state import State
 from .graph_builder import AgentGraphBuilder
-from .base_agent import AgentConfig
+from .base_agent import AgentConfig, NothingToResumeError
 from .session_manager import SessionManager
 from .logging_utils import init_logging
 
@@ -34,6 +34,7 @@ __all__ = [
     "State",
     "AgentGraphBuilder",
     "AgentConfig",
+    "NothingToResumeError",
     "SessionManager",
     "init_logging",
 ]

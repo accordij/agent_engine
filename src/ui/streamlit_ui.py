@@ -128,175 +128,6 @@ if "cp_rename_mode" not in st.session_state:
 
 
 # ------------------------------------------------------------------
-# Сайдбар — управление (в фрагменте, чтобы кнопки отражали живое состояние)
-# ------------------------------------------------------------------
-
-with st.sidebar:
-    st.title(_st_cfg.get("page_title", "Агентский движок"))
-
-    bridge = st.session_state.bridge
-    st.selectbox("Агент", bridge.available_agents(),
-                 disabled=bridge.is_running, key="ui_agent_name")
-    st.text_area("Стартовое сообщение",
-                 placeholder="Опишите задачу для агента...",
-                 disabled=bridge.is_running, key="ui_start_message")
-
-    @st.fragment(run_every=_REFRESH_SIDEBAR)
-    def sidebar_controls() -> None:
-        b: AgentBridge = st.session_state.bridge
-        agent_name: str = st.session_state.get("ui_agent_name", "")
-        start_message: str = st.session_state.get("ui_start_message", "") or ""
-
-        # Когда агент завершается — делаем полную перерисовку страницы,
-        # чтобы selectbox и text_area (вне фрагмента) разблокировались.
-        if st.session_state.get("_agent_was_running", False) and not b.is_running:
-            st.session_state["_agent_was_running"] = False
-            st.rerun(scope="app")
-        if b.is_running:
-            st.session_state["_agent_was_running"] = True
-
-        col1, col2 = st.columns(2)
-        run_clicked = col1.button(
-            "▶ Запустить",
-            disabled=b.is_running,
-            use_container_width=True,
-            type="primary",
-            key="btn_run",
-        )
-        stop_clicked = col2.button(
-            "⏹ Стоп",
-            disabled=not b.is_running,
-            use_container_width=True,
-            key="btn_stop",
-        )
-
-        if run_clicked:
-            cfg = _load_config()
-            recursion_limit = cfg.get("agent", {}).get("recursion_limit", 100)
-            llm = _init_llm()
-            b.start(agent_name, start_message.strip(), llm, recursion_limit)
-            st.rerun(scope="app")
-
-        if stop_clicked:
-            b.stop()
-            st.rerun(scope="app")
-
-        st.divider()
-
-        if b.is_running:
-            st.info("Работает...")
-        elif b.error:
-            st.error(f"Ошибка: {b.error}")
-        elif b.events:
-            st.success("Завершено")
-        else:
-            st.caption("Выберите агента и введите задачу")
-
-    sidebar_controls()
-
-    # ------------------------------------------------------------------
-    # Панель сессий и чекпоинтов
-    # ------------------------------------------------------------------
-    _render_sessions_panel()
-
-
-# ------------------------------------------------------------------
-# Основная область — лента сверху, вопрос/ответ снизу
-# ------------------------------------------------------------------
-
-st.header("Лента событий")
-
-
-@st.fragment(run_every=_REFRESH_FEED)
-def agent_panel() -> None:
-    b: AgentBridge = st.session_state.bridge
-    pq = b.pending_question
-
-    feed_height = _FEED_HEIGHT_WITH_Q if pq is not None else _FEED_HEIGHT_FULL
-    events = b.events
-    with st.container(height=feed_height, border=True):
-        if not events:
-            st.caption("Событий пока нет. Запустите агента.")
-        else:
-            for event in events:
-                _render_event(event)
-
-    if pq is not None:
-        with st.form("answer_form", clear_on_submit=True):
-            st.warning(f"**Вопрос агента:** {pq}")
-            answer = st.text_area("Ваш ответ", key="answer_input", height=_ANSWER_HEIGHT)
-            submitted = st.form_submit_button("Отправить", type="primary")
-        if submitted and answer.strip():
-            b.send_answer(answer.strip())
-
-
-def _render_event(event: dict) -> None:
-    etype = event.get("type", "")
-
-    if etype == "run_start":
-        st.info(f"**Запуск агента** `{event.get('agent')}` (run {event.get('run_id')})")
-
-    elif etype == "run_end":
-        elapsed = event.get("elapsed", 0)
-        stats = event.get("stats", {})
-        tokens = stats.get("total_tokens", 0)
-        llm_calls = stats.get("llm_calls", 0)
-        tool_calls = stats.get("tool_calls", 0)
-        st.success(
-            f"**Завершено** за {elapsed:.1f}с — "
-            f"{tokens} токенов, {llm_calls} LLM-вызовов, {tool_calls} инструментов"
-        )
-
-    elif etype == "ai_message":
-        with st.chat_message("assistant"):
-            st.markdown(event.get("content", ""))
-
-    elif etype == "tool_start":
-        name = event.get("name", "")
-        params = event.get("params", "")
-        st.markdown(f"🔧 **{name}** `{params}`")
-
-    elif etype == "tool_end":
-        output = event.get("output", "")
-        st.markdown(f"↩ `{output}`")
-
-    elif etype == "tool_error":
-        st.error(f"Ошибка инструмента: {event.get('error')}")
-
-    elif etype == "state_transition":
-        st.markdown(
-            f"<span style='color:gray'>⟶ состояние: "
-            f"**{event.get('from')}** → **{event.get('to')}**</span>",
-            unsafe_allow_html=True,
-        )
-
-    elif etype == "print":
-        with st.chat_message("tool", avatar="🛠️"):
-            text = event.get("text", "")
-            st.markdown(text.replace("\n", "  \n"))
-
-    elif etype == "warning":
-        st.warning(event.get("message", ""))
-
-    elif etype == "error":
-        st.error(f"**Ошибка:** {event.get('message', '')}")
-
-    elif etype == "image":
-        path = event.get("path", "")
-        caption = event.get("caption") or None
-        if Path(path).exists():
-            st.image(path, caption=caption)
-        else:
-            st.warning(f"Изображение не найдено: {path}")
-
-    elif etype == "stopped":
-        st.warning(event.get("message", "Остановлено"))
-
-    elif etype == "llm_error":
-        st.error(f"**Ошибка LLM:** {event.get('error', '')}")
-
-
-# ------------------------------------------------------------------
 # SessionManager helper (кэшируется)
 # ------------------------------------------------------------------
 
@@ -318,6 +149,31 @@ def _get_session_manager():
 @st.cache_resource
 def _get_cached_session_manager():
     return _get_session_manager()
+
+
+def _start_from_checkpoint(agent, agent_name: str, session_id: str,
+                            checkpoint_id: str, edits: dict | None) -> None:
+    """Тегировать чекпоинт, форкнуть и запустить в bridge."""
+    import uuid as _uuid
+    bridge: AgentBridge = st.session_state.bridge
+    if bridge.is_running:
+        st.warning("Агент уже запущен. Остановите текущий запуск.")
+        return
+    try:
+        temp_name = f"_ui_fork_{_uuid.uuid4().hex[:8]}"
+        agent.tag_checkpoint(session_id, temp_name, checkpoint_id=checkpoint_id)
+        new_sid = agent.fork(temp_name, edits=edits)
+        agent._sm.delete_named_checkpoint(temp_name)
+
+        cfg = _load_config()
+        recursion_limit = cfg.get("agent", {}).get("recursion_limit", 100)
+        llm = _init_llm()
+        # Запускаем с пустым сообщением — граф продолжит из форкнутого checkpoint
+        bridge.start(agent_name, "", llm, recursion_limit, session_id=new_sid)
+        st.session_state.cp_edit_mode = False
+        st.rerun(scope="app")
+    except Exception as e:
+        st.error(f"Ошибка запуска из чекпоинта: {e}")
 
 
 # ------------------------------------------------------------------
@@ -499,29 +355,175 @@ def _render_sessions_panel() -> None:
                 st.error(f"Не удалось загрузить состояние: {e}")
 
 
-def _start_from_checkpoint(agent, agent_name: str, session_id: str,
-                            checkpoint_id: str, edits: dict | None) -> None:
-    """Тегировать чекпоинт, форкнуть и запустить в bridge."""
-    import uuid as _uuid
-    bridge: AgentBridge = st.session_state.bridge
-    if bridge.is_running:
-        st.warning("Агент уже запущен. Остановите текущий запуск.")
-        return
-    try:
-        temp_name = f"_ui_fork_{_uuid.uuid4().hex[:8]}"
-        agent.tag_checkpoint(session_id, temp_name, checkpoint_id=checkpoint_id)
-        new_sid = agent.fork(temp_name, edits=edits)
-        agent._sm.delete_named_checkpoint(temp_name)
+# ------------------------------------------------------------------
+# Сайдбар — управление (в фрагменте, чтобы кнопки отражали живое состояние)
+# ------------------------------------------------------------------
 
-        cfg = _load_config()
-        recursion_limit = cfg.get("agent", {}).get("recursion_limit", 100)
-        llm = _init_llm()
-        # Запускаем с пустым сообщением — граф продолжит из форкнутого checkpoint
-        bridge.start(agent_name, "", llm, recursion_limit, session_id=new_sid)
-        st.session_state.cp_edit_mode = False
-        st.rerun(scope="app")
-    except Exception as e:
-        st.error(f"Ошибка запуска из чекпоинта: {e}")
+with st.sidebar:
+    st.title(_st_cfg.get("page_title", "Агентский движок"))
+
+    bridge = st.session_state.bridge
+    st.selectbox("Агент", bridge.available_agents(),
+                 disabled=bridge.is_running, key="ui_agent_name")
+    st.text_area("Стартовое сообщение",
+                 placeholder="Опишите задачу для агента...",
+                 disabled=bridge.is_running, key="ui_start_message")
+
+    @st.fragment(run_every=_REFRESH_SIDEBAR)
+    def sidebar_controls() -> None:
+        b: AgentBridge = st.session_state.bridge
+        agent_name: str = st.session_state.get("ui_agent_name", "")
+        start_message: str = st.session_state.get("ui_start_message", "") or ""
+
+        # Когда агент завершается — делаем полную перерисовку страницы,
+        # чтобы selectbox и text_area (вне фрагмента) разблокировались.
+        if st.session_state.get("_agent_was_running", False) and not b.is_running:
+            st.session_state["_agent_was_running"] = False
+            st.rerun(scope="app")
+        if b.is_running:
+            st.session_state["_agent_was_running"] = True
+
+        col1, col2 = st.columns(2)
+        run_clicked = col1.button(
+            "▶ Запустить",
+            disabled=b.is_running,
+            use_container_width=True,
+            type="primary",
+            key="btn_run",
+        )
+        stop_clicked = col2.button(
+            "⏹ Стоп",
+            disabled=not b.is_running,
+            use_container_width=True,
+            key="btn_stop",
+        )
+
+        if run_clicked:
+            cfg = _load_config()
+            recursion_limit = cfg.get("agent", {}).get("recursion_limit", 100)
+            llm = _init_llm()
+            b.start(agent_name, start_message.strip(), llm, recursion_limit)
+            st.rerun(scope="app")
+
+        if stop_clicked:
+            b.stop()
+            st.rerun(scope="app")
+
+        st.divider()
+
+        if b.is_running:
+            st.info("Работает...")
+        elif b.error:
+            st.error(f"Ошибка: {b.error}")
+        elif b.events:
+            st.success("Завершено")
+        else:
+            st.caption("Выберите агента и введите задачу")
+
+    sidebar_controls()
+
+    # ------------------------------------------------------------------
+    # Панель сессий и чекпоинтов
+    # ------------------------------------------------------------------
+    _render_sessions_panel()
+
+
+# ------------------------------------------------------------------
+# Основная область — лента сверху, вопрос/ответ снизу
+# ------------------------------------------------------------------
+
+st.header("Лента событий")
+
+
+@st.fragment(run_every=_REFRESH_FEED)
+def agent_panel() -> None:
+    b: AgentBridge = st.session_state.bridge
+    pq = b.pending_question
+
+    feed_height = _FEED_HEIGHT_WITH_Q if pq is not None else _FEED_HEIGHT_FULL
+    events = b.events
+    with st.container(height=feed_height, border=True):
+        if not events:
+            st.caption("Событий пока нет. Запустите агента.")
+        else:
+            for event in events:
+                _render_event(event)
+
+    if pq is not None:
+        with st.form("answer_form", clear_on_submit=True):
+            st.warning(f"**Вопрос агента:** {pq}")
+            answer = st.text_area("Ваш ответ", key="answer_input", height=_ANSWER_HEIGHT)
+            submitted = st.form_submit_button("Отправить", type="primary")
+        if submitted and answer.strip():
+            b.send_answer(answer.strip())
+
+
+def _render_event(event: dict) -> None:
+    etype = event.get("type", "")
+
+    if etype == "run_start":
+        st.info(f"**Запуск агента** `{event.get('agent')}` (run {event.get('run_id')})")
+
+    elif etype == "run_end":
+        elapsed = event.get("elapsed", 0)
+        stats = event.get("stats", {})
+        tokens = stats.get("total_tokens", 0)
+        llm_calls = stats.get("llm_calls", 0)
+        tool_calls = stats.get("tool_calls", 0)
+        st.success(
+            f"**Завершено** за {elapsed:.1f}с — "
+            f"{tokens} токенов, {llm_calls} LLM-вызовов, {tool_calls} инструментов"
+        )
+
+    elif etype == "ai_message":
+        with st.chat_message("assistant"):
+            st.markdown(event.get("content", ""))
+
+    elif etype == "tool_start":
+        name = event.get("name", "")
+        params = event.get("params", "")
+        st.markdown(f"🔧 **{name}** `{params}`")
+
+    elif etype == "tool_end":
+        output = event.get("output", "")
+        st.markdown(f"↩ `{output}`")
+
+    elif etype == "tool_error":
+        st.error(f"Ошибка инструмента: {event.get('error')}")
+
+    elif etype == "state_transition":
+        st.markdown(
+            f"<span style='color:gray'>⟶ состояние: "
+            f"**{event.get('from')}** → **{event.get('to')}**</span>",
+            unsafe_allow_html=True,
+        )
+
+    elif etype == "print":
+        with st.chat_message("tool", avatar="🛠️"):
+            text = event.get("text", "")
+            st.markdown(text.replace("\n", "  \n"))
+
+    elif etype == "warning":
+        st.warning(event.get("message", ""))
+
+    elif etype == "error":
+        st.error(f"**Ошибка:** {event.get('message', '')}")
+
+    elif etype == "image":
+        path = event.get("path", "")
+        caption = event.get("caption") or None
+        if Path(path).exists():
+            st.image(path, caption=caption)
+        else:
+            st.warning(f"Изображение не найдено: {path}")
+
+    elif etype == "stopped":
+        st.warning(event.get("message", "Остановлено"))
+
+    elif etype == "llm_error":
+        st.error(f"**Ошибка LLM:** {event.get('error', '')}")
+
+
 
 
 agent_panel()

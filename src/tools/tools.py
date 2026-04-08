@@ -352,6 +352,10 @@ def list_registered_agents() -> list[str]:
 def call_agent(agent_name: str, query: str) -> str:
     """Вызывает другого зарегистрированного агента.
 
+    Поддерживает crash recovery: если supervisor упал во время предыдущего
+    вызова этого sub-агента, при следующем вызове sub-агент будет возобновлён
+    с последнего checkpoint-а, а не запущен заново.
+
     Args:
         agent_name: Имя агента для вызова
         query: Запрос к агенту
@@ -360,6 +364,7 @@ def call_agent(agent_name: str, query: str) -> str:
         Результат работы агента
     """
     from src.agent_engine.logging_utils import log_memory_snapshot, is_enabled
+    from src.agent_engine.base_agent import _active_session_ctx
 
     if is_enabled():
         log_memory_snapshot(f"before_call({agent_name})", _memory_store, when="multiagent")
@@ -369,11 +374,50 @@ def call_agent(agent_name: str, query: str) -> str:
         available = ", ".join(list_registered_agents()) or "нет"
         return f"Ошибка: агент '{agent_name}' не зарегистрирован. Доступны: {available}"
 
+    sm = agent._sm
+    # Читаем session_id того агента, который сейчас выполняется в этом потоке —
+    # это и есть supervisor. ContextVar гарантирует корректность в многопоточной среде.
+    supervisor_session = _active_session_ctx.get()
+    sub_session_id: str | None = None
+    is_recovery = False
+
+    if sm is not None and supervisor_session:
+        # Проверяем: был ли уже запуск sub-агента в этой supervisor-сессии?
+        sub_session_id = sm.get_linked_sub_session(supervisor_session, agent_name)
+        if sub_session_id:
+            is_recovery = True
+
+    # Первый запуск: создаём сессию sub-агента и сразу пишем ссылку на диск.
+    # Это делается ДО invoke() — если supervisor упадёт, ссылка уже сохранена.
+    if sm is not None and supervisor_session and not is_recovery:
+        sub_session_id = sm.create_session(
+            agent_name,
+            description=f"sub-агент [{agent_name}] для сессии {supervisor_session[:8]}",
+        )
+        sm.link_sub_session(supervisor_session, agent_name, sub_session_id)
+
     try:
-        result = agent.invoke([query])
+        if is_recovery:
+            # Проверяем: sub-агент был прерван (есть незавершённые узлы)?
+            snap = agent.graph.get_state({"configurable": {"thread_id": sub_session_id}})
+            if snap and snap.next:
+                # Граф не дошёл до конца — продолжаем с последнего checkpoint-а
+                result = agent.resume(sub_session_id)
+            else:
+                # Граф завершился (или пустой snapshot) — запускаем заново
+                result = agent.invoke([query], session_id=sub_session_id)
+        else:
+            result = agent.invoke([query], session_id=sub_session_id)
+
         last_message = result["messages"][-1].content
+
+        # Успешно завершили — убираем ссылку crash recovery
+        if sm is not None and supervisor_session:
+            sm.clear_sub_session_link(supervisor_session, agent_name)
         return f"Результат от агента '{agent_name}':\n{last_message}"
     except Exception as e:
+        # Ссылка на сессию sub-агента остаётся в sessions.json —
+        # при следующем resume supervisor-а sub-агент будет найден и возобновлён
         return f"Ошибка при вызове агента '{agent_name}': {e}"
 
 

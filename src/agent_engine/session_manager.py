@@ -8,7 +8,6 @@ from typing import Any
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-
 class SessionManager:
     """Управляет реестром сессий и именованными чекпоинтами агентов.
 
@@ -23,16 +22,34 @@ class SessionManager:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         self._checkpointer: SqliteSaver | None = None
+        self._conn: sqlite3.Connection | None = None
 
     # ------------------------------------------------------------------
     # Checkpointer (singleton)
     # ------------------------------------------------------------------
 
     def get_checkpointer(self) -> SqliteSaver:
-        """Вернуть singleton SqliteSaver для переданного db_path."""
+        """Вернуть singleton SqliteSaver.
+
+        Создаём соединение вручную через sqlite3.connect() — это позволяет
+        избежать проблемы с from_conn_string(), который возвращает context manager,
+        а не готовый объект. check_same_thread=False нужен потому что агент
+        работает в отдельном потоке (особенно в Streamlit).
+        """
         if self._checkpointer is None:
-            self._checkpointer = SqliteSaver.from_conn_string(str(self.db_path))
+            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30)
+            self._checkpointer = SqliteSaver(self._conn)
         return self._checkpointer
+
+    def close(self) -> None:
+        """Закрыть соединение с БД чекпоинтов."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+            self._checkpointer = None
 
     # ------------------------------------------------------------------
     # Реестр (чтение / запись)
@@ -40,9 +57,10 @@ class SessionManager:
 
     def _load(self) -> dict:
         if not self.registry_path.exists():
-            return {"sessions": {}, "named_checkpoints": {}}
-        with open(self.registry_path, encoding="utf-8") as f:
-            return json.load(f)
+            return {"sessions": {}, "named_checkpoints": {}, "sub_session_links": {}}
+        data = json.load(open(self.registry_path, encoding="utf-8"))
+        data.setdefault("sub_session_links", {})
+        return data
 
     def _save(self, data: dict) -> None:
         with open(self.registry_path, "w", encoding="utf-8") as f:
@@ -193,6 +211,45 @@ class SessionManager:
             self.delete_session(sid)
             deleted += 1
         return deleted
+
+    # ------------------------------------------------------------------
+    # Ссылки supervisor → sub-agent session (для crash recovery)
+    # ------------------------------------------------------------------
+
+    def link_sub_session(
+        self, supervisor_session_id: str, agent_name: str, sub_session_id: str
+    ) -> None:
+        """Записать на диск: supervisor X при вызове agent_name использовал sub_session Y.
+
+        Вызывается сразу до запуска sub-агента, до любого checkpoint-а.
+        Это позволяет найти сессию sub-агента при resume supervisor-а,
+        даже если supervisor упал до того как его node завершился.
+        """
+        data = self._load()
+        key = f"{supervisor_session_id}::{agent_name}"
+        data["sub_session_links"][key] = {
+            "sub_session_id": sub_session_id,
+            "created_at": datetime.now().isoformat(),
+        }
+        self._save(data)
+
+    def get_linked_sub_session(
+        self, supervisor_session_id: str, agent_name: str
+    ) -> str | None:
+        """Найти session_id sub-агента по supervisor + agent_name."""
+        data = self._load()
+        key = f"{supervisor_session_id}::{agent_name}"
+        entry = data["sub_session_links"].get(key)
+        return entry["sub_session_id"] if entry else None
+
+    def clear_sub_session_link(
+        self, supervisor_session_id: str, agent_name: str
+    ) -> None:
+        """Удалить ссылку после успешного завершения sub-агента."""
+        data = self._load()
+        key = f"{supervisor_session_id}::{agent_name}"
+        data["sub_session_links"].pop(key, None)
+        self._save(data)
 
     # ------------------------------------------------------------------
     # SQLite: прямое удаление чекпоинтов по thread_id

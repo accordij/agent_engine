@@ -7,7 +7,6 @@ from langchain_core.messages import BaseMessage
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.outputs import ChatResult
 from langchain_core.language_models.chat_models import generate_from_stream
-from langchain_gigachat.chat_models.gigachat import trim_content_to_stop_sequence
 from langchain_openai import ChatOpenAI
 
 
@@ -46,13 +45,6 @@ class GigaChatDelayed(GigaChat):
 
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
-        for choice in response.choices:
-            trimmed_content = trim_content_to_stop_sequence(
-                choice.message.content, stop
-            )
-            if isinstance(trimmed_content, str):
-                choice.message.content = trimmed_content
-                break
 
         return self._create_chat_result(response)
 

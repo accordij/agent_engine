@@ -1,13 +1,15 @@
 # LangChain core
-langchain>=0.1.0
-langchain-core>=0.1.0
+langchain>=1.2.15
+langchain-core>=1.2.26
 
 # LLM providers
-langchain-gigachat>=0.1.0
-langchain-openai>=0.0.5
+langchain-gigachat>=0.5.0
+langchain-openai>=1.1.12
 
 # Agent framework
-langgraph>=0.0.20
+langgraph>=1.1.6
+langgraph-checkpoint>=3.0.0
+langgraph-checkpoint-sqlite>=3.0.3  # SqliteSaver
 
 # Observability
 rich>=13.0
