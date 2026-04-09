@@ -413,12 +413,15 @@ class AgentCallbackHandler(BaseCallbackHandler):
         _emit(f"  [tool]  -> {str(output)}[/]", role="tools")
 
     def on_tool_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
-        _emit_ui_event({"type": "tool_error", "error": str(error)})
-        if not is_enabled():
-            return
         err_name = error.__class__.__name__
         if err_name == "EarlyBreakTransition":
-            _emit("  [state]TOOL EarlyBreakTransition[/]", role="tools")
+            _emit_ui_event({"type": "tool_break", "message": "EARLY_BREAK"})
+            if not is_enabled():
+                return
+            _emit("  [state]TOOL BREAK[/]", role="tools")
+            return
+        _emit_ui_event({"type": "tool_error", "error": str(error)})
+        if not is_enabled():
             return
         _emit(f"  [error]TOOL ERROR: {error}[/]", role="tools")
 

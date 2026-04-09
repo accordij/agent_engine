@@ -491,6 +491,9 @@ def _render_event(event: dict) -> None:
     elif etype == "tool_error":
         st.error(f"Ошибка инструмента: {event.get('error')}")
 
+    elif etype == "tool_break":
+        st.caption("Инструмент: ранний переход")
+
     elif etype == "state_transition":
         st.markdown(
             f"<span style='color:gray'>⟶ состояние: "
