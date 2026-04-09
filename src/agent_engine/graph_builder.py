@@ -1,6 +1,7 @@
 """Сборщик графа агента из декларативных описаний."""
 import json
 import re
+from pathlib import Path
 from typing import TypedDict, Annotated, Any
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -11,12 +12,13 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command
 from langgraph.managed import RemainingSteps
 from langgraph.errors import GraphRecursionError
-from .state import State, MemoryInjection
+from .state import State, MemoryInjection, AutoTransitionRule
 from .logging_utils import (
     log_state_transition,
     log_memory_snapshot,
     log_warning,
     log_reentry,
+    log_transition_mode,
 )
 
 
@@ -28,6 +30,10 @@ class AgentState(TypedDict):
 
 
 _TRANSITION_KEY = "__transition__"
+
+
+class EarlyBreakTransition(Exception):
+    """Сигнал штатного раннего выхода после успешного transition."""
 
 
 class AgentGraphBuilder:
@@ -112,15 +118,21 @@ class AgentGraphBuilder:
         state_name = state.name
 
         @langchain_tool
-        def transition(reasoning: str, summary: str, next_state: str) -> str:
+        def transition(reasoning: str = "", summary: str = "", next_state: str = "") -> str:
             """Переход в другое состояние агента. Вызови когда текущая задача завершена.
 
             Args:
                 reasoning: Почему принято решение о переходе.
-                summary: Краткое резюме проделанной работы и напутствие следующему состоянию. Обязательно укажи какие ключи сохранены в memory.
+                summary: Краткое резюме проделанной работы и напутствие следующему состоянию.
                 next_state: Куда перейти. "stay" — остаться в текущем состоянии.
             """
             from src.tools.tools import _memory_store
+
+            if not next_state:
+                return (
+                    "Ошибка: next_state обязателен. "
+                    f"Доступные переходы: {allowed_str}."
+                )
 
             if next_state not in allowed:
                 memory_keys = sorted(list(_memory_store.keys()))
@@ -130,11 +142,25 @@ class AgentGraphBuilder:
                     f"Текущие ключи в памяти: {memory_keys}"
                 )
 
+            if state.require_transition_summary and not summary.strip():
+                return (
+                    "Ошибка: в этом состоянии summary обязателен. "
+                    "Передай краткое резюме и какие ключи сохранены в memory."
+                )
+
+            if state.require_transition_reasoning and not reasoning.strip():
+                return "Ошибка: в этом состоянии reasoning обязателен."
+
             _memory_store[_TRANSITION_KEY] = {
                 "reasoning": reasoning,
                 "summary": summary,
                 "next_state": next_state,
             }
+
+            if state.early_break and next_state != "stay":
+                raise EarlyBreakTransition(
+                    f"EARLY_BREAK transition={state_name}->{next_state}"
+                )
 
             return (
                 f"OK: переход в '{next_state}' подтверждён. "
@@ -149,13 +175,31 @@ class AgentGraphBuilder:
             return ""
 
         transitions_list = "\n".join(f'  - "{t}"' for t in allowed)
+        mode = "FAST" if state.fast_transition else "FULL"
+        field_rules = [
+            "- next_state: ОБЯЗАТЕЛЕН, укажи состояние из списка ниже.",
+            (
+                "- reasoning: ОБЯЗАТЕЛЕН."
+                if state.require_transition_reasoning
+                else "- reasoning: опционален."
+            ),
+            (
+                "- summary: ОБЯЗАТЕЛЕН, укажи что сделано и какие ключи сохранены в memory."
+                if state.require_transition_summary
+                else "- summary: опционален."
+            ),
+        ]
+        if state.fast_transition:
+            field_rules.append(
+                "- Быстрый режим: старайся вызывать transition сразу после достижения результата."
+            )
         return f"""
 
 ## Переход в другое состояние
 Когда задача в текущем состоянии выполнена, вызови инструмент transition:
-- reasoning: почему переходишь именно туда.
-- summary: что было сделано и что нужно сделать в следующем состоянии. Укажи какие ключи сохранены в memory.
-- next_state: одно из доступных значений:
+Режим: {mode}
+{chr(10).join(field_rules)}
+Доступные значения next_state:
   - "stay" — остаться в текущем состоянии (нужно ещё поработать)
 {transitions_list}
 
@@ -233,6 +277,108 @@ class AgentGraphBuilder:
 
         return result
 
+    def _normalize_auto_transition_rule(self, raw: Any, state_name: str) -> dict[str, Any] | None:
+        if isinstance(raw, AutoTransitionRule):
+            return {
+                "next_state": raw.next_state,
+                "summary": raw.summary,
+                "memory_has_all": list(raw.memory_has_all or []),
+                "memory_equals": dict(raw.memory_equals or {}),
+                "memory_regex": dict(raw.memory_regex or {}),
+                "file_exists": list(raw.file_exists or []),
+            }
+        if isinstance(raw, dict):
+            next_state = str(raw.get("next_state", "")).strip()
+            if not next_state:
+                return None
+            return {
+                "next_state": next_state,
+                "summary": str(raw.get("summary", "")),
+                "memory_has_all": list(raw.get("memory_has_all", []) or []),
+                "memory_equals": dict(raw.get("memory_equals", {}) or {}),
+                "memory_regex": dict(raw.get("memory_regex", {}) or {}),
+                "file_exists": list(raw.get("file_exists", []) or []),
+            }
+        log_warning(
+            f"Некорректный auto_transition в '{state_name}': {type(raw).__name__}. "
+            "Ожидается dict или AutoTransitionRule."
+        )
+        return None
+
+    def _match_auto_transition(self, state: State, memory_store: dict[str, Any]) -> dict[str, str] | None:
+        rules = state.auto_transitions or []
+        if not rules:
+            return None
+
+        allowed = {"stay"} | set(state.transitions)
+        for raw in rules:
+            rule = self._normalize_auto_transition_rule(raw, state.name)
+            if not rule:
+                continue
+
+            next_state = rule["next_state"]
+            if next_state not in allowed:
+                log_warning(
+                    f"auto_transition в '{state.name}' ведёт в '{next_state}', "
+                    f"но доступно только: {sorted(list(allowed))}"
+                )
+                continue
+
+            has_all = True
+            for key in rule["memory_has_all"]:
+                if key not in memory_store:
+                    has_all = False
+                    break
+            if not has_all:
+                continue
+
+            equals_ok = True
+            for key, expected in rule["memory_equals"].items():
+                if memory_store.get(key) != expected:
+                    equals_ok = False
+                    break
+            if not equals_ok:
+                continue
+
+            regex_ok = True
+            for key, pattern_value in rule["memory_regex"].items():
+                current = str(memory_store.get(key, ""))
+                patterns = (
+                    pattern_value
+                    if isinstance(pattern_value, (list, tuple))
+                    else [pattern_value]
+                )
+                matched_any = False
+                for pattern in patterns:
+                    try:
+                        if re.search(str(pattern), current):
+                            matched_any = True
+                            break
+                    except re.error:
+                        log_warning(
+                            f"Некорректный regex в auto_transition '{state.name}': "
+                            f"key='{key}', pattern='{pattern}'"
+                        )
+                if not matched_any:
+                    regex_ok = False
+                    break
+            if not regex_ok:
+                continue
+
+            files_ok = True
+            for p in rule["file_exists"]:
+                if not Path(str(p)).exists():
+                    files_ok = False
+                    break
+            if not files_ok:
+                continue
+
+            return {
+                "next_state": next_state,
+                "summary": rule["summary"],
+            }
+        return None
+
     def _summarize_for_reentry(self, messages: list, state_name: str) -> str:
         from src.tools.tools import _memory_store
 
@@ -289,6 +435,35 @@ class AgentGraphBuilder:
             _memory_store.update(state_memory)
             _memory_store.pop(_TRANSITION_KEY, None)
 
+            auto_transition = self._match_auto_transition(state, _memory_store)
+            if auto_transition:
+                next_target = auto_transition["next_state"]
+                transition_summary = auto_transition.get("summary", "")
+                memory_keys = sorted(
+                    k for k in _memory_store.keys() if k != _TRANSITION_KEY
+                )
+                context = (
+                    f"{transition_summary}\n"
+                    f"Ключи в памяти: {memory_keys}. "
+                    f"Используй memory(action='get', key='...') для получения данных."
+                ).strip()
+
+                new_state: dict[str, Any] = {"memory": dict(_memory_store)}
+                if state.on_exit:
+                    new_state = state.on_exit(new_state)
+                log_transition_mode("auto_transition", state.name, next_target)
+                log_memory_snapshot(state.name, _memory_store, when="exit(auto)")
+
+                if next_target == "stay":
+                    new_state["summary"] = context
+                    return Command(goto=state.name, update=new_state)
+                if next_target == "END":
+                    new_state["summary"] = ""
+                    return Command(goto=END, update=new_state)
+
+                new_state["summary"] = context
+                return Command(goto=next_target, update=new_state)
+
             summary = state_data.get("summary", "")
             messages = [SystemMessage(content=full_prompt)]
 
@@ -320,6 +495,40 @@ class AgentGraphBuilder:
                     {"messages": messages},
                     config=inner_config,
                 )
+            except EarlyBreakTransition:
+                transition_decision = _memory_store.pop(_TRANSITION_KEY, None)
+                new_state: dict[str, Any] = {"memory": dict(_memory_store)}
+                if state.on_exit:
+                    new_state = state.on_exit(new_state)
+
+                if transition_decision:
+                    next_target = transition_decision["next_state"]
+                    transition_summary = transition_decision["summary"]
+                    memory_keys = sorted(
+                        k for k in _memory_store.keys() if k != _TRANSITION_KEY
+                    )
+                    context = (
+                        f"{transition_summary}\n"
+                        f"Ключи в памяти: {memory_keys}. "
+                        f"Используй memory(action='get', key='...') для получения данных."
+                    )
+                    log_transition_mode("early_break", state.name, next_target)
+                    log_memory_snapshot(state.name, _memory_store, when="exit(early_break)")
+
+                    if next_target == "stay":
+                        new_state["summary"] = context
+                        return Command(goto=state.name, update=new_state)
+                    if next_target == "END":
+                        new_state["summary"] = ""
+                        return Command(goto=END, update=new_state)
+
+                    new_state["summary"] = context
+                    return Command(goto=next_target, update=new_state)
+
+                log_warning(f"Early break без transition в '{state.name}', остаёмся")
+                new_state["summary"] = self._summarize_for_reentry(messages, state.name)
+                log_memory_snapshot(state.name, _memory_store, when="exit(early_break_no_transition)")
+                return Command(goto=state.name, update=new_state)
             except GraphRecursionError:
                 auto_summary = self._summarize_for_reentry(messages, state.name)
                 log_reentry(state.name)
@@ -357,6 +566,7 @@ class AgentGraphBuilder:
                     f"Используй memory(action='get', key='...') для получения данных."
                 )
 
+                log_transition_mode("transition_tool", state.name, next_target)
                 log_memory_snapshot(state.name, _memory_store, when="exit")
 
                 if next_target == "stay":
@@ -388,6 +598,7 @@ class AgentGraphBuilder:
                     f"Используй memory(action='get', key='...') для получения данных."
                 )
 
+                log_transition_mode("transition_tool", state.name, next_target)
                 log_memory_snapshot(state.name, _memory_store, when="exit(fallback)")
 
                 if next_target == "stay":
@@ -554,6 +765,28 @@ class AgentGraphBuilder:
 
             transitions = ", ".join(s.transitions) if s.transitions else "нет"
             lines.append(f"    Переходы: {transitions}")
+            lines.append(
+                "    Режим перехода: "
+                f"fast_transition={'yes' if s.fast_transition else 'no'}, "
+                f"early_break={'yes' if s.early_break else 'no'}"
+            )
+            if s.auto_transitions:
+                rendered_rules = []
+                for raw in s.auto_transitions:
+                    rule = self._normalize_auto_transition_rule(raw, s.name)
+                    if not rule:
+                        continue
+                    rendered_rules.append(
+                        f"{rule['next_state']} "
+                        f"(has={rule['memory_has_all']}, eq={rule['memory_equals']}, "
+                        f"regex={rule['memory_regex']}, files={rule['file_exists']})"
+                    )
+                lines.append(
+                    "    Auto transitions: "
+                    + (", ".join(rendered_rules) if rendered_rules else "нет")
+                )
+            else:
+                lines.append("    Auto transitions: нет")
 
             if s.tools:
                 grouped_tools: dict[str, list[str]] = {

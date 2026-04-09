@@ -477,6 +477,49 @@ State(
 - Добавь `ВАЖНО: вызов transition обязателен` — это снижает вероятность «забытого» перехода.
 - Если состояний несколько, опиши **условие** перехода в каждое: «если X — переходи в A, если Y — переходи в B».
 
+### Agent tuning: как ускорить переходы
+
+Для ускорения работы можно использовать state-level настройки, не меняя инструменты:
+
+- `fast_transition=True` — разрешает переход без обязательных `summary/reasoning`.
+- `early_break=True` — после успешного `transition` завершает текущий ReAct-цикл раньше.
+- `auto_transitions=[...]` — декларативные авто-переходы по условиям (например, по ключам памяти) **до вызова LLM**.
+  - поддерживаются условия по наличию ключей, точному значению и regex по значениям в памяти.
+
+Принцип: все условия маршрутизации описываются в `agent.py` на уровне `State`, чтобы переходы были в одном месте и отображались в `visualize()`.
+
+Пример:
+
+```python
+from src.agent_engine import State, AutoTransitionRule
+
+State(
+    name="fast_demo",
+    tools=["think"],
+    prompt="Сделай короткий шаг и вызови transition(next_state='END').",
+    transitions=["END"],
+    fast_transition=True,
+    early_break=True,
+    require_transition_summary=False,
+    require_transition_reasoning=False,
+)
+
+State(
+    name="auto_demo",
+    tools=["think"],
+    prompt="Если этот prompt виден, авто-переход не сработал.",
+    transitions=["END"],
+    auto_transitions=[
+        AutoTransitionRule(
+            next_state="END",
+            summary="Автопереход: найден ключ result.",
+            memory_has_all=["result"],
+            memory_regex={"status": "готов|done|success"},
+        )
+    ],
+)
+```
+
 ### Агент с ветвлением
 
 ```python

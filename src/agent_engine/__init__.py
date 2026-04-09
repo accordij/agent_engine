@@ -24,7 +24,7 @@
         ]
 """
 
-from .state import State
+from .state import State, AutoTransitionRule
 from .graph_builder import AgentGraphBuilder
 from .base_agent import AgentConfig, NothingToResumeError
 from .session_manager import SessionManager
@@ -32,6 +32,7 @@ from .logging_utils import init_logging
 
 __all__ = [
     "State",
+    "AutoTransitionRule",
     "AgentGraphBuilder",
     "AgentConfig",
     "NothingToResumeError",

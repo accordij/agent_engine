@@ -1,10 +1,10 @@
 """Агент с роутингом — выбор пути в зависимости от типа запроса."""
 
-from src.agent_engine import AgentConfig, State
+from src.agent_engine import AgentConfig, State, AutoTransitionRule
 
 
 class RouterAgent(AgentConfig):
-    """Граф: [classify] → [math | text | error] → END"""
+    """Граф: [classify] → [math | text | fast_demo | auto_prepare | error] → END"""
 
     entry_point = "classify"
 
@@ -19,14 +19,16 @@ class RouterAgent(AgentConfig):
 Типы запросов:
 1. "math" — математический запрос (вычисления, формулы, числа)
 2. "text" — текстовый запрос (обычный текст, приветствие, вопрос)
-3. "error" — не удалось определить тип
+3. "fast_demo" — тест быстрого перехода (fast + early_break)
+4. "auto_demo" — тест автоперехода без вызова LLM (через memory)
+5. "error" — не удалось определить тип
 
 Алгоритм:
 1. Проанализируй запрос пользователя
 2. Определи его тип
 3. Сохрани тип в память: memory(action="save", key="request_type", value="<тип>")
 """,
-            transitions=["math", "text", "error"],
+            transitions=["math", "text", "fast_demo", "auto_prepare", "error"],
             description="Классификация типа запроса",
             memory_injections=[
                 ("request_type", "Тип запроса уже определен: "),
@@ -67,6 +69,47 @@ class RouterAgent(AgentConfig):
             memory_injections=[
                 ("request_type", "Роутер определил тип: ", "Тип запроса пока не определен."),
                 ("response_text", "Черновик ответа уже есть: "),
+            ],
+        ),
+        State(
+            name="fast_demo",
+            tools=["think"],
+            prompt="""Ты демонстрационный state для fast transition.
+
+Сделай один короткий шаг и сразу вызови transition(next_state="END").
+summary/reasoning можно не передавать.
+""",
+            transitions=["END"],
+            description="Демо быстрого перехода fast_transition + early_break",
+            fast_transition=True,
+            early_break=True,
+            require_transition_summary=False,
+            require_transition_reasoning=False,
+        ),
+        State(
+            name="auto_prepare",
+            tools=["memory", "think"],
+            prompt="""Подготовь данные для автоперехода:
+1. Сохрани memory(action="save", key="auto_ready", value="yes")
+2. Сразу вызови transition(next_state="auto_demo")
+""",
+            transitions=["auto_demo"],
+            description="Подготовка ключа памяти для auto_transition",
+        ),
+        State(
+            name="auto_demo",
+            tools=["think"],
+            prompt="""Если ты видишь этот prompt, значит авто-переход не сработал.
+Сообщи об ошибке и вызови transition(next_state="END").
+""",
+            transitions=["END"],
+            description="Демо auto_transition по ключу памяти",
+            auto_transitions=[
+                AutoTransitionRule(
+                    next_state="END",
+                    summary="Автопереход: найден ключ auto_ready в памяти.",
+                    memory_has_all=["auto_ready"],
+                )
             ],
         ),
 

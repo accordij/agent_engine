@@ -416,6 +416,10 @@ class AgentCallbackHandler(BaseCallbackHandler):
         _emit_ui_event({"type": "tool_error", "error": str(error)})
         if not is_enabled():
             return
+        err_name = error.__class__.__name__
+        if err_name == "EarlyBreakTransition":
+            _emit("  [state]TOOL EarlyBreakTransition[/]", role="tools")
+            return
         _emit(f"  [error]TOOL ERROR: {error}[/]", role="tools")
 
     def get_summary(self) -> dict:
@@ -603,6 +607,20 @@ def log_warning(message: str):
     _emit(f"  [warning]WARN: {message}[/]")
 
 
+def log_transition_mode(mode: str, from_state: str, to_state: str):
+    _emit_ui_event(
+        {
+            "type": "transition_mode",
+            "mode": mode,
+            "from": from_state,
+            "to": to_state,
+        }
+    )
+    if not is_enabled():
+        return
+    _emit(f"  [state]TRANSITION {mode}: {from_state} -> {to_state}[/]", role="state")
+
+
 def log_reentry(state_name: str):
     if not is_enabled():
         return
@@ -655,6 +673,7 @@ __all__ = [
     "log_run_end",
     "log_run_start",
     "log_state_transition",
+    "log_transition_mode",
     "log_warning",
     "set_ui_event_emitter",
 ]
