@@ -1,6 +1,7 @@
 """Менеджер сессий агентов: реестр, именованные чекпоинты, прунинг."""
 import json
 import sqlite3
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -16,13 +17,55 @@ class SessionManager:
     - sessions.json   — наш реестр: метаданные сессий и именованные чекпоинты
     """
 
-    def __init__(self, db_path: str | Path, registry_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        registry_path: str | Path,
+        snapshot_db_path: str | Path | None = None,
+        snapshot_registry_path: str | Path | None = None,
+        sync_on_run_end: bool = False,
+    ) -> None:
         self.db_path = Path(db_path)
         self.registry_path = Path(registry_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        self.snapshot_db_path = Path(snapshot_db_path) if snapshot_db_path else None
+        self.snapshot_registry_path = (
+            Path(snapshot_registry_path) if snapshot_registry_path else None
+        )
+        self.sync_on_run_end = sync_on_run_end
         self._checkpointer: SqliteSaver | None = None
         self._conn: sqlite3.Connection | None = None
+        self._sync_lock = threading.Lock()
+
+        # Для datalab-режима: поднимаем локальные файлы из snapshot в NFS
+        # до первого открытия соединения с SQLite.
+        self._restore_from_snapshot()
+
+    def _is_snapshot_enabled(self) -> bool:
+        if self.snapshot_db_path is None or self.snapshot_registry_path is None:
+            return False
+        return (
+            self.snapshot_db_path.resolve() != self.db_path.resolve()
+            or self.snapshot_registry_path.resolve() != self.registry_path.resolve()
+        )
+
+    def _restore_from_snapshot(self) -> None:
+        if not self._is_snapshot_enabled():
+            return
+
+        if self.snapshot_registry_path and self.snapshot_registry_path.exists():
+            self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+            self.registry_path.write_text(
+                self.snapshot_registry_path.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+
+        if self.snapshot_db_path and self.snapshot_db_path.exists():
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(str(self.snapshot_db_path), timeout=30) as src:
+                with sqlite3.connect(str(self.db_path), timeout=30) as dst:
+                    src.backup(dst)
 
     # ------------------------------------------------------------------
     # Checkpointer (singleton)
@@ -50,6 +93,31 @@ class SessionManager:
                 pass
             self._conn = None
             self._checkpointer = None
+
+    def sync_to_snapshot(self) -> None:
+        """Синхронизировать локальные файлы с snapshot-хранилищем (например, NFS)."""
+        if not self._is_snapshot_enabled():
+            return
+        if not self.sync_on_run_end:
+            return
+
+        with self._sync_lock:
+            if self.snapshot_db_path:
+                self.snapshot_db_path.parent.mkdir(parents=True, exist_ok=True)
+                if self._conn is not None:
+                    with sqlite3.connect(str(self.snapshot_db_path), timeout=30) as dst:
+                        self._conn.backup(dst)
+                elif self.db_path.exists():
+                    with sqlite3.connect(str(self.db_path), timeout=30) as src:
+                        with sqlite3.connect(str(self.snapshot_db_path), timeout=30) as dst:
+                            src.backup(dst)
+
+            if self.snapshot_registry_path and self.registry_path.exists():
+                self.snapshot_registry_path.parent.mkdir(parents=True, exist_ok=True)
+                self.snapshot_registry_path.write_text(
+                    self.registry_path.read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
 
     # ------------------------------------------------------------------
     # Реестр (чтение / запись)

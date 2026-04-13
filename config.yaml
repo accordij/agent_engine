@@ -3,6 +3,11 @@
 # Выбор бэкенда: "gigachat" или "lmstudio"
 active_backend: "lmstudio"
 
+# Runtime-режимы окружения
+runtime:
+  # Для JupyterHub/DataLab: локальный SQLite cache в /tmp + sync в sessions/*
+  datalab_mode: false
+
 # Настройки подключений
 # temperature - степень случайности, timeout - лимит ожидания (сек.)
 backends:
@@ -94,6 +99,15 @@ sessions:
   # Старые сессии удаляются при загрузке агента.
   # Сессии с именованными чекпоинтами защищены от удаления.
   max_sessions_per_agent: 20
+  datalab:
+    # Включает локальный cache в /tmp, если runtime.datalab_mode: true
+    # актуально для datalab, где на сетевом диске nfs не работает sqlite
+    use_local_cache: false
+    # Рабочие файлы sqlite/json внутри контейнера
+    local_db_path: "/tmp/agent_engine/sessions/checkpoints.db"
+    local_registry_path: "/tmp/agent_engine/sessions/sessions.json"
+    # Синхронизировать локальные файлы обратно в sessions/* на сетевой диск в конце run
+    sync_on_run_end: true
 
 
 # Streamlit UI

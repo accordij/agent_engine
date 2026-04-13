@@ -717,6 +717,7 @@ logging:
 | Поле | Значения | Описание |
 |---|---|---|
 | `active_backend` | `gigachat` / `lmstudio` | Какой LLM-бэкенд использовать |
+| `runtime.datalab_mode` | `true` / `false` | Режим для JupyterHub/DataLab: включает локальный cache сессий в `/tmp` (если дополнительно включён `sessions.datalab.use_local_cache`) |
 | `backends.*.model` | строка | Имя модели |
 | `backends.*.temperature` | 0.0–1.0 | Степень случайности ответов |
 | `backends.*.timeout` | секунды | Лимит ожидания ответа от LLM |
@@ -745,9 +746,45 @@ sessions:
   db_path: "sessions/checkpoints.db"     # SQLite с состояниями
   registry_path: "sessions/sessions.json" # реестр сессий и имён
   max_sessions_per_agent: 20              # 0 = безлимит
+  datalab:
+    use_local_cache: false
+    local_db_path: "/tmp/agent_cdo/sessions/checkpoints.db"
+    local_registry_path: "/tmp/agent_cdo/sessions/sessions.json"
+    sync_on_run_end: true
 ```
 
 При загрузке агента старые сессии сверх лимита удаляются автоматически. Сессии с именованными чекпоинтами защищены от удаления.
+
+### DataLab/JupyterHub режим (NFS-safe)
+
+Если рабочая директория находится на NFS/сетевой ФС, SQLite может случайно подвисать (это частая проблема для JupyterHub и похожих сред).  
+Для таких окружений добавлен режим локального кэша:
+
+- рабочие файлы сессий живут в `/tmp` внутри контейнера;
+- при старте агента локальные файлы восстанавливаются из `sessions/*`;
+- при завершении run (`invoke/stream/resume`) локальные изменения синхронизируются обратно в `sessions/*`.
+
+Включение в `config.yaml`:
+
+```yaml
+runtime:
+  datalab_mode: true
+
+sessions:
+  enabled: true
+  db_path: "sessions/checkpoints.db"
+  registry_path: "sessions/sessions.json"
+  datalab:
+    use_local_cache: true
+    local_db_path: "/tmp/agent_cdo/sessions/checkpoints.db"
+    local_registry_path: "/tmp/agent_cdo/sessions/sessions.json"
+    sync_on_run_end: true
+```
+
+Важно:
+- режим активируется только если одновременно `sessions.enabled: true`, `runtime.datalab_mode: true` и `sessions.datalab.use_local_cache: true`;
+- `sync_on_run_end` экономит I/O по сравнению с частой периодической синхронизацией и обычно достаточен, если run завершается корректно;
+- если контейнер может аварийно перезапускаться, можно дополнительно делать ручной sync в ключевых точках сценария.
 
 ### Два типа чекпоинтов
 

@@ -51,6 +51,20 @@ def _load_sessions_config() -> dict:
         return {}
 
 
+def _load_runtime_config() -> dict:
+    """Читает секцию runtime из config.yaml. Возвращает {} при ошибке."""
+    try:
+        import yaml
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        if not config_path.exists():
+            return {}
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        return cfg.get("runtime", {})
+    except Exception:
+        return {}
+
+
 # Синглтон: один SessionManager на db_path — все агенты делят одно соединение.
 # Ключ — абсолютный путь к БД чекпоинтов.
 _SM_REGISTRY: dict[str, Any] = {}
@@ -71,9 +85,33 @@ def _make_session_manager():
         from .session_manager import SessionManager
         project_root = Path(__file__).parent.parent.parent
         db_path = (project_root / cfg.get("db_path", "sessions/checkpoints.db")).resolve()
+        registry_path = (project_root / cfg.get("registry_path", "sessions/sessions.json")).resolve()
+
+        runtime_cfg = _load_runtime_config()
+        datalab_cfg = cfg.get("datalab", {}) or {}
+        datalab_mode = bool(runtime_cfg.get("datalab_mode", False))
+        use_local_cache = bool(datalab_cfg.get("use_local_cache", False))
+
+        if datalab_mode and use_local_cache:
+            local_db_path = Path(
+                datalab_cfg.get("local_db_path", "/tmp/agent_cdo/sessions/checkpoints.db")
+            ).resolve()
+            local_registry_path = Path(
+                datalab_cfg.get("local_registry_path", "/tmp/agent_cdo/sessions/sessions.json")
+            ).resolve()
+            key = f"{local_db_path}|{local_registry_path}|{db_path}|{registry_path}"
+            if key not in _SM_REGISTRY:
+                _SM_REGISTRY[key] = SessionManager(
+                    db_path=local_db_path,
+                    registry_path=local_registry_path,
+                    snapshot_db_path=db_path,
+                    snapshot_registry_path=registry_path,
+                    sync_on_run_end=bool(datalab_cfg.get("sync_on_run_end", True)),
+                )
+            return _SM_REGISTRY[key]
+
         key = str(db_path)
         if key not in _SM_REGISTRY:
-            registry_path = project_root / cfg.get("registry_path", "sessions/sessions.json")
             _SM_REGISTRY[key] = SessionManager(db_path=db_path, registry_path=registry_path)
         return _SM_REGISTRY[key]
     except Exception:
@@ -223,6 +261,7 @@ class AgentConfig:
             log_run_end(self.agent_id, handler)
             if self._sm is not None and session_id:
                 self._sm.update_session_meta(session_id, last_state="END")
+                self._sm.sync_to_snapshot()
 
         return result
 
@@ -256,6 +295,7 @@ class AgentConfig:
             log_run_end(self.agent_id, handler)
             if self._sm is not None and session_id:
                 self._sm.update_session_meta(session_id, last_state="END")
+                self._sm.sync_to_snapshot()
 
     # ------------------------------------------------------------------
     # Работа с сессиями и чекпоинтами
@@ -301,6 +341,7 @@ class AgentConfig:
             _active_session_ctx.reset(_token)
             log_run_end(self.agent_id, handler)
             self._sm.update_session_meta(session_id, last_state="END")
+            self._sm.sync_to_snapshot()
         return result
 
     def restore_memory(self, session_id: str, checkpoint_id: str | None = None) -> dict:
